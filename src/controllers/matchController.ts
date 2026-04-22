@@ -5,6 +5,7 @@ import Match, { MatchStatus } from '../models/Match';
 import Team from '../models/Team';
 import School from '../models/School';
 import Event, { EventStatus } from '../models/Event';
+import { emitToEvent } from '../socket';
 
 // @desc    Create a school matchup manually
 // @route   POST /api/v1/events/:eventId/matchups
@@ -30,6 +31,8 @@ export const createMatchup = asyncHandler(async (req: Request, res: Response) =>
     schoolB: schoolBId ? String(schoolBId) : undefined,
     stage: stage || TournamentStage.PRELIMINARY,
   });
+
+  emitToEvent(String(eventId), 'matchups:created', { matchups: [matchup] });
 
   res.status(201).json(matchup);
 });
@@ -81,7 +84,6 @@ export const enterMatchResult = asyncHandler(async (req: Request, res: Response)
     throw new Error('Match not found');
   }
 
-  // Validate winner is one of the two teams
   const validTeams = [match.teamA?.toString(), match.teamB?.toString()].filter(Boolean);
   if (!validTeams.includes(winnerId.toString())) {
     res.status(400);
@@ -91,7 +93,6 @@ export const enterMatchResult = asyncHandler(async (req: Request, res: Response)
   const isCorrection = match.status === MatchStatus.COMPLETED && match.winner;
 
   if (isCorrection) {
-    // Fully reverse the previous result for both teams
     const previousWinnerId = match.winner!.toString();
     const previousLoserId = validTeams.find((id) => id !== previousWinnerId);
 
@@ -103,7 +104,6 @@ export const enterMatchResult = asyncHandler(async (req: Request, res: Response)
     }
   }
 
-  // Award result to new winner and increment matchesPlayed for both
   const newLoserId = validTeams.find((id) => id !== String(winnerId));
 
   await Team.findByIdAndUpdate(String(winnerId), {
@@ -118,6 +118,8 @@ export const enterMatchResult = asyncHandler(async (req: Request, res: Response)
   match.scoredBy = req.user?._id as any;
   match.scoredAt = new Date();
   await match.save();
+
+  emitToEvent(match.event.toString(), 'match:updated', match);
 
   // Check for bracket advancement
   if ([TournamentStage.QUARTER_FINAL, TournamentStage.SEMI_FINAL, TournamentStage.FINAL].includes(match.stage)) {
@@ -138,15 +140,10 @@ async function checkAndAdvanceBracket(eventId: string, currentStage: TournamentS
   if (!event) return;
 
   if (currentStage === TournamentStage.QUARTER_FINAL) {
-    // Check if SF already exists
     const sfExists = await Match.exists({ event: eventId, stage: TournamentStage.SEMI_FINAL });
     if (sfExists) return;
 
-    // Advance to SF: 0v3 and 1v2
-    const pairings = [
-      [0, 3],
-      [1, 2],
-    ];
+    const pairings = [[0, 3], [1, 2]];
 
     for (let i = 0; i < pairings.length; i++) {
       const matchA = matches.find((m) => m.bracketSlot === pairings[i][0]);
@@ -175,14 +172,20 @@ async function checkAndAdvanceBracket(eventId: string, currentStage: TournamentS
         });
       }
     }
-    event.status = EventStatus.BRACKET_STAGE; // Ensure status
+
+    event.status = EventStatus.BRACKET_STAGE;
     await event.save();
+
+    const sfMatches = await Match.find({ event: eventId, stage: TournamentStage.SEMI_FINAL })
+      .populate('teamA', 'name')
+      .populate('teamB', 'name');
+    emitToEvent(eventId, 'bracket:updated', { stage: TournamentStage.SEMI_FINAL, matches: sfMatches });
+    emitToEvent(eventId, 'event:statusChanged', { status: event.status });
+
   } else if (currentStage === TournamentStage.SEMI_FINAL) {
-    // Check if Final already exists
     const finalExists = await Match.exists({ event: eventId, stage: TournamentStage.FINAL });
     if (finalExists) return;
 
-    // Advance to Final: SF0 vs SF1
     const matchA = matches.find((m) => m.bracketSlot === 0);
     const matchB = matches.find((m) => m.bracketSlot === 1);
 
@@ -207,10 +210,17 @@ async function checkAndAdvanceBracket(eventId: string, currentStage: TournamentS
         bracketSlot: 0,
         status: MatchStatus.PENDING,
       });
+
+      const finalMatch = await Match.findOne({ event: eventId, stage: TournamentStage.FINAL })
+        .populate('teamA', 'name')
+        .populate('teamB', 'name');
+      emitToEvent(eventId, 'bracket:updated', { stage: TournamentStage.FINAL, matches: [finalMatch] });
     }
+
   } else if (currentStage === TournamentStage.FINAL) {
     event.status = EventStatus.COMPLETED;
     await event.save();
+    emitToEvent(eventId, 'event:statusChanged', { status: event.status });
   }
 }
 
@@ -232,7 +242,6 @@ export const autoAssignMatchups = asyncHandler(async (req: Request, res: Respons
     throw new Error('At least 2 schools are required to assign matchups');
   }
 
-  // Shuffle schools
   const shuffled = [...schools].sort(() => Math.random() - 0.5);
   const matchupsCreated: any[] = [];
   const byeSchools: string[] = [];
@@ -242,7 +251,6 @@ export const autoAssignMatchups = asyncHandler(async (req: Request, res: Respons
     const schoolB = shuffled[i + 1];
 
     if (!schoolB) {
-      // Odd school out — gets a bye
       byeSchools.push(schoolA.name);
       continue;
     }
@@ -278,10 +286,14 @@ export const autoAssignMatchups = asyncHandler(async (req: Request, res: Respons
     });
   }
 
-  res.status(201).json({
+  const response = {
     matchups: matchupsCreated,
     ...(byeSchools.length > 0 && { byeSchools, notice: 'Some schools received a bye due to odd count' }),
-  });
+  };
+
+  emitToEvent(String(eventId), 'matchups:created', response);
+
+  res.status(201).json(response);
 });
 
 // @desc    Generate Power 8 bracket — staff pick teams or auto-select top 8 by points
@@ -289,7 +301,7 @@ export const autoAssignMatchups = asyncHandler(async (req: Request, res: Respons
 // @access  Private
 export const generateBracket = asyncHandler(async (req: Request, res: Response) => {
   const { eventId } = req.params;
-  const { teamIds } = req.body; // optional: array of exactly 8 team IDs
+  const { teamIds } = req.body;
 
   const event = await Event.findById(eventId);
   if (!event || event.status !== EventStatus.PRELIMINARY_ROUNDS) {
@@ -309,7 +321,6 @@ export const generateBracket = asyncHandler(async (req: Request, res: Response) 
       res.status(400);
       throw new Error('One or more teamIds are invalid or do not belong to this event');
     }
-    // Preserve the order staff provided (their seeding intent)
     teams = teamIds.map((id: string) => teams.find((t) => t._id.toString() === id)!);
   } else {
     teams = await Team.find({ event: eventId })
@@ -321,7 +332,6 @@ export const generateBracket = asyncHandler(async (req: Request, res: Response) 
     }
   }
 
-  // Seeding: 1v8, 2v7, 3v6, 4v5
   const seeds = [
     [teams[0], teams[7]],
     [teams[1], teams[6]],
@@ -354,11 +364,15 @@ export const generateBracket = asyncHandler(async (req: Request, res: Response) 
     matchups.push(matchup);
   }
 
-  // Advance event status to Bracket Stage
   event.status = EventStatus.BRACKET_STAGE;
   await event.save();
 
-  res.status(201).json({ matchups, power8: teams.map((t) => ({ id: t._id, name: t.name, points: t.totalPoints })) });
+  const power8 = teams.map((t) => ({ id: t._id, name: t.name, points: t.totalPoints }));
+
+  emitToEvent(String(eventId), 'bracket:generated', { matchups, power8 });
+  emitToEvent(String(eventId), 'event:statusChanged', { status: event.status });
+
+  res.status(201).json({ matchups, power8 });
 });
 
 // @desc    Cancel a matchup and its matches (only if no results entered)
@@ -408,6 +422,8 @@ export const voidMatchResult = asyncHandler(async (req: Request, res: Response) 
   match.scoredBy = undefined;
   match.scoredAt = undefined;
   await match.save();
+
+  emitToEvent(match.event.toString(), 'match:updated', match);
 
   res.json({ message: 'Match result voided', match });
 });
@@ -461,6 +477,8 @@ export const cancelBracket = asyncHandler(async (req: Request, res: Response) =>
 
   event.status = EventStatus.PRELIMINARY_ROUNDS;
   await event.save();
+
+  emitToEvent(String(eventId), 'event:statusChanged', { status: event.status });
 
   res.json({ message: 'Bracket cancelled. Event reverted to Preliminary Rounds.' });
 });

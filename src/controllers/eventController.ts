@@ -6,6 +6,7 @@ import Team from '../models/Team';
 import PublicSpeaker from '../models/PublicSpeaker';
 import Match from '../models/Match';
 import Matchup from '../models/Matchup';
+import { emitToEvent } from '../socket';
 
 // Valid status transitions — enforces the SRS lifecycle
 const VALID_TRANSITIONS: Record<EventStatus, EventStatus[]> = {
@@ -114,6 +115,7 @@ export const updateEventStatus = asyncHandler(async (req: Request, res: Response
 
   event.status = status;
   const updated = await event.save();
+  emitToEvent(updated._id.toString(), 'event:statusChanged', { status: updated.status });
   res.json(updated);
 });
 
@@ -141,6 +143,7 @@ export const rollbackEventStatus = asyncHandler(async (req: Request, res: Respon
 
   event.status = previous;
   const updated = await event.save();
+  emitToEvent(updated._id.toString(), 'event:statusChanged', { status: updated.status });
   res.json(updated);
 });
 
