@@ -1,0 +1,35 @@
+import dotenv from 'dotenv';
+dotenv.config();
+
+const requireEnv = (key: string): string => {
+  const value = process.env[key];
+  if (!value) throw new Error(`Missing required environment variable: ${key}`);
+  return value;
+};
+
+const config = {
+  port: Number(process.env.PORT) || 5000,
+  nodeEnv: process.env.NODE_ENV || 'development',
+  mongoUri: requireEnv('MONGODB_URI'),
+  jwtSecret: requireEnv('JWT_SECRET'),
+  jwtExpiresIn: process.env.JWT_EXPIRES_IN || '30d',
+  clientUrl: process.env.CLIENT_URL || 'http://localhost:3000',
+  seedAdmin: {
+    name: requireEnv('SEED_ADMIN_NAME'),
+    email: requireEnv('SEED_ADMIN_EMAIL'),
+    password: requireEnv('SEED_ADMIN_PASSWORD'),
+  },
+  staff: {
+    seedPassword: requireEnv('STAFF_SEED_PASSWORD'),
+    dashboardUrl: process.env.STAFF_DASHBOARD_URL || 'http://localhost:3000/staff/login',
+  },
+  smtp: {
+    host: requireEnv('SMTP_HOST'),
+    port: Number(process.env.SMTP_PORT) || 587,
+    user: requireEnv('SMTP_USER'),
+    pass: requireEnv('SMTP_PASS'),
+    from: process.env.SMTP_FROM || requireEnv('SMTP_USER'),
+  },
+} as const;
+
+export default config;
