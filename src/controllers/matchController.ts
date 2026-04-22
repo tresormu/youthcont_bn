@@ -309,19 +309,19 @@ export const generateBracket = asyncHandler(async (req: Request, res: Response) 
     throw new Error('Event must be in Preliminary Rounds stage to generate the bracket');
   }
 
-  let teams;
+  let teams: Awaited<ReturnType<typeof Team.find>>;
 
   if (teamIds) {
     if (!Array.isArray(teamIds) || teamIds.length !== 8) {
       res.status(400);
       throw new Error('teamIds must be an array of exactly 8 team IDs');
     }
-    teams = await Team.find({ _id: { $in: teamIds }, event: eventId });
-    if (teams.length !== 8) {
+    const found = await Team.find({ _id: { $in: teamIds }, event: eventId });
+    if (found.length !== 8) {
       res.status(400);
       throw new Error('One or more teamIds are invalid or do not belong to this event');
     }
-    teams = teamIds.map((id: string) => teams.find((t) => t._id.toString() === id)!);
+    teams = teamIds.map((id: string) => found.find((t) => t._id.toString() === id)!);
   } else {
     teams = await Team.find({ event: eventId })
       .sort({ totalPoints: -1, matchesPlayed: 1 })
