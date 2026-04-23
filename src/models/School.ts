@@ -13,6 +13,9 @@ const schoolSchema: Schema = new Schema({
     type: String,
     required: true
   },
+  region: {
+    type: String
+  },
   contactPerson: {
     type: String
   },

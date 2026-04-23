@@ -272,7 +272,7 @@ export const sendStaffInviteEmail = async (email: string, pinCode: string) => {
                         <td style="width:28px;height:28px;background:#0f3460;border-radius:50%;text-align:center;vertical-align:middle;">
                           <span style="color:#fff;font-size:13px;font-weight:700;">1</span>
                         </td>
-                        <td style="padding-left:12px;color:#4a5568;font-size:14px;line-height:1.6;">Click the button below to go to the staff login page.</td>
+                        <td style="padding-left:12px;color:#4a5568;font-size:14px;line-height:1.6;">Click the button below to go to the activation page.</td>
                       </tr>
                     </table>
                   </td>
@@ -284,7 +284,7 @@ export const sendStaffInviteEmail = async (email: string, pinCode: string) => {
                         <td style="width:28px;height:28px;background:#0f3460;border-radius:50%;text-align:center;vertical-align:middle;">
                           <span style="color:#fff;font-size:13px;font-weight:700;">2</span>
                         </td>
-                        <td style="padding-left:12px;color:#4a5568;font-size:14px;line-height:1.6;">Enter your email and the PIN code above.</td>
+                        <td style="padding-left:12px;color:#4a5568;font-size:14px;line-height:1.6;">Enter your email, the PIN code above, and choose a new password.</td>
                       </tr>
                     </table>
                   </td>
@@ -296,7 +296,7 @@ export const sendStaffInviteEmail = async (email: string, pinCode: string) => {
                         <td style="width:28px;height:28px;background:#0f3460;border-radius:50%;text-align:center;vertical-align:middle;">
                           <span style="color:#fff;font-size:13px;font-weight:700;">3</span>
                         </td>
-                        <td style="padding-left:12px;color:#4a5568;font-size:14px;line-height:1.6;">Set your own password when prompted after PIN verification.</td>
+                        <td style="padding-left:12px;color:#4a5568;font-size:14px;line-height:1.6;">Your account activates instantly — log in with your new password from then on.</td>
                       </tr>
                     </table>
                   </td>
@@ -307,9 +307,9 @@ export const sendStaffInviteEmail = async (email: string, pinCode: string) => {
               <table width="100%" cellpadding="0" cellspacing="0">
                 <tr>
                   <td align="center">
-                    <a href="${dashboardUrl}"
+                    <a href="${dashboardUrl.replace('/staff/login', '/activate')}"
                       style="display:inline-block;background:linear-gradient(135deg,#0f3460,#16213e);color:#ffffff;text-decoration:none;font-size:15px;font-weight:600;padding:14px 40px;border-radius:7px;letter-spacing:0.5px;">
-                      Access Staff Dashboard &rarr;
+                      Activate My Account &rarr;
                     </a>
                   </td>
                 </tr>

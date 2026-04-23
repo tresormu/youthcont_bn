@@ -14,6 +14,16 @@ export const submitContact = asyncHandler(async (req: Request, res: Response) =>
     throw new Error('email, phone, reason, and message are all required');
   }
 
+  if (typeof phone !== 'string' || phone.length > 20) {
+    res.status(400);
+    throw new Error('phone must be a string of at most 20 characters');
+  }
+
+  if (typeof message !== 'string' || message.length > 2000) {
+    res.status(400);
+    throw new Error('message must be at most 2000 characters');
+  }
+
   if (!Object.values(ContactReason).includes(reason)) {
     res.status(400);
     throw new Error(`Invalid reason. Valid options: ${Object.values(ContactReason).join(', ')}`);

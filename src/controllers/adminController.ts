@@ -38,7 +38,7 @@ export const createStaff = asyncHandler(async (req: Request, res: Response) => {
     passwordHash,
     pinCode: pinHash,
     role: 'staff',
-    isActive: true,
+    isActive: false,
   });
 
   await sendStaffInviteEmail(email, pinCode);

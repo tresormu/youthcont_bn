@@ -35,8 +35,8 @@ const authLimiter = rateLimit({
 // Routes
 app.use('/api/v1/auth', authLimiter, authRoutes);
 app.use('/api/v1/admin', adminRoutes);
-app.use('/api/v1/staff', staffRoutes);
 app.use('/api/v1/staff/auth', authLimiter, staffAuthRoutes);
+app.use('/api/v1/staff', staffRoutes);
 app.use('/api/v1/events', eventRoutes);
 app.use('/api/v1', schoolRoutes);
 app.use('/api/v1', matchRoutes);

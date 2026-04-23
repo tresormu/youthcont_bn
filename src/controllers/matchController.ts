@@ -153,10 +153,15 @@ async function checkAndAdvanceBracket(eventId: string, currentStage: TournamentS
         const teamA = await Team.findById(matchA.winner);
         const teamB = await Team.findById(matchB.winner);
 
+        if (!teamA || !teamB) {
+          console.error(`[bracket] QF->SF: could not find teams for slot ${i}`);
+          continue;
+        }
+
         const matchup = await Matchup.create({
           event: eventId,
-          schoolA: teamA!.school as any,
-          schoolB: teamB!.school as any,
+          schoolA: teamA.school as any,
+          schoolB: teamB.school as any,
           stage: TournamentStage.SEMI_FINAL,
           bracketSlot: i,
         });
@@ -164,8 +169,8 @@ async function checkAndAdvanceBracket(eventId: string, currentStage: TournamentS
         await Match.create({
           matchup: matchup._id as any,
           event: eventId,
-          teamA: teamA!._id as any,
-          teamB: teamB!._id as any,
+          teamA: teamA._id as any,
+          teamB: teamB._id as any,
           stage: TournamentStage.SEMI_FINAL,
           bracketSlot: i,
           status: MatchStatus.PENDING,
@@ -193,10 +198,15 @@ async function checkAndAdvanceBracket(eventId: string, currentStage: TournamentS
       const teamA = await Team.findById(matchA.winner);
       const teamB = await Team.findById(matchB.winner);
 
+      if (!teamA || !teamB) {
+        console.error('[bracket] SF->Final: could not find teams');
+        return;
+      }
+
       const matchup = await Matchup.create({
         event: eventId,
-        schoolA: teamA!.school as any,
-        schoolB: teamB!.school as any,
+        schoolA: teamA.school as any,
+        schoolB: teamB.school as any,
         stage: TournamentStage.FINAL,
         bracketSlot: 0,
       });
@@ -204,8 +214,8 @@ async function checkAndAdvanceBracket(eventId: string, currentStage: TournamentS
       await Match.create({
         matchup: matchup._id as any,
         event: eventId,
-        teamA: teamA!._id as any,
-        teamB: teamB!._id as any,
+        teamA: teamA._id as any,
+        teamB: teamB._id as any,
         stage: TournamentStage.FINAL,
         bracketSlot: 0,
         status: MatchStatus.PENDING,

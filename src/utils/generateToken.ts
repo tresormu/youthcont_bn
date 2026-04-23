@@ -3,6 +3,7 @@ import { Response } from 'express';
 import config from '../config/config';
 
 const generateToken = (res: Response, userId: string): void => {
+  const expiresInDays = parseInt(config.jwtExpiresIn) || 5;
   const token = jwt.sign({ userId }, config.jwtSecret, {
     expiresIn: config.jwtExpiresIn,
   } as jwt.SignOptions);
@@ -11,7 +12,7 @@ const generateToken = (res: Response, userId: string): void => {
     httpOnly: true,
     secure: config.nodeEnv !== 'development',
     sameSite: 'strict',
-    maxAge: 30 * 24 * 60 * 60 * 1000,
+    maxAge: expiresInDays * 24 * 60 * 60 * 1000,
   });
 };
 

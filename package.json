@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "nodemon --watch src --ext ts --exec tsx src/server.ts",
     "seed:admin": "tsx scripts/seed-admin.ts",
+    "seed:test": "tsx scripts/seed-test-data.ts",
     "build": "tsc",
     "start": "node dist/server.js",
     "test": "echo \"Error: no test specified\" && exit 1"

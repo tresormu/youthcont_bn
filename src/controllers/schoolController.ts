@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import asyncHandler from '../utils/asyncHandler';
 import School from '../models/School';
 import Event, { EventStatus } from '../models/Event';
+import { emitToEvent } from '../socket';
 
 // @desc    Register a school for an event
 // @route   POST /api/v1/events/:eventId/schools
@@ -34,8 +35,12 @@ export const registerSchool = asyncHandler(async (req: Request, res: Response) =
   }
 
   const school = await School.create({ name, region, contactPerson, contactEmail, event: eventIdStr });
+  
+  emitToEvent(eventIdStr, 'school:added', school);
+  
   res.status(201).json(school);
 });
+
 
 // @desc    Get all schools for an event
 // @route   GET /api/v1/events/:eventId/schools

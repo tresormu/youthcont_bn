@@ -7,7 +7,16 @@ import User from '../models/User';
 // @access  Seed Admin only
 export const getStaff = asyncHandler(async (_req: Request, res: Response) => {
   const staff = await User.find({}).select('-passwordHash -pinCode').sort({ createdAt: -1 });
-  res.json(staff);
+  const result = staff.map((s) => ({
+    _id: s._id,
+    name: s.name,
+    email: s.email,
+    role: s.role,
+    isActive: s.isActive,
+    pendingActivation: !s.isActive && !!s.pinCode,
+    createdAt: (s as any).createdAt,
+  }));
+  res.json(result);
 });
 
 // @desc    Update staff member details
