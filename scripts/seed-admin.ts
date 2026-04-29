@@ -3,11 +3,17 @@
  * Run once on a fresh deployment: npm run seed:admin
  * The seed admin account cannot be created or removed from the UI.
  */
+import dns from 'dns';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import bcrypt from 'bcryptjs';
 
 dotenv.config();
+
+if (process.env.MONGODB_URI?.startsWith('mongodb+srv://')) {
+  dns.setServers(['8.8.8.8', '1.1.1.1']);
+  dns.setDefaultResultOrder('ipv4first');
+}
 
 const MONGODB_URI = process.env.MONGODB_URI;
 const SEED_ADMIN_NAME = process.env.SEED_ADMIN_NAME;
@@ -20,7 +26,7 @@ if (!MONGODB_URI || !SEED_ADMIN_NAME || !SEED_ADMIN_EMAIL || !SEED_ADMIN_PASSWOR
 }
 
 async function seed() {
-  await mongoose.connect(MONGODB_URI!);
+  await mongoose.connect(MONGODB_URI!, { serverSelectionTimeoutMS: 30000, socketTimeoutMS: 30000, family: 4 });
 
   // Dynamically import model after connection
   const User = (await import('../src/models/User')).default;

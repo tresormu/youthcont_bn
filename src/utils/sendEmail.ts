@@ -307,7 +307,7 @@ export const sendStaffInviteEmail = async (email: string, pinCode: string) => {
               <table width="100%" cellpadding="0" cellspacing="0">
                 <tr>
                   <td align="center">
-                    <a href="${dashboardUrl.replace('/staff/login', '/activate')}"
+                    <a href="${dashboardUrl?.replace('/staff/login', '/activate') ?? '#'}"
                       style="display:inline-block;background:linear-gradient(135deg,#0f3460,#16213e);color:#ffffff;text-decoration:none;font-size:15px;font-weight:600;padding:14px 40px;border-radius:7px;letter-spacing:0.5px;">
                       Activate My Account &rarr;
                     </a>

@@ -3,7 +3,7 @@ import { Response } from 'express';
 import config from '../config/config';
 
 const generateToken = (res: Response, userId: string): void => {
-  const expiresInDays = parseInt(config.jwtExpiresIn) || 5;
+  const expiresInDays = parseInt(config.jwtExpiresIn ?? '5') || 5;
   const token = jwt.sign({ userId }, config.jwtSecret, {
     expiresIn: config.jwtExpiresIn,
   } as jwt.SignOptions);
