@@ -18,11 +18,18 @@ const app: Application = express();
 
 app.use(helmet());
 app.use(cors({
-  origin: [
-    'https://youthcont-fn.vercel.app',
-    'http://localhost:5173',
-    'http://localhost:5174',
-  ],
+  origin: (origin, callback) => {
+    const allowed = [
+      'https://youthcont-fn.vercel.app',
+      'http://localhost:5173',
+      'http://localhost:5174',
+    ];
+    if (!origin || allowed.includes(origin) || /\.vercel\.app$/.test(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
 }));
 app.use(express.json());
