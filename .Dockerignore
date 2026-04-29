@@ -1,0 +1,7 @@
+config.hcl
+andasy.hcl
+Dockerfile
+.dockerignore
+.env
+node_modules
+.git
