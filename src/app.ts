@@ -12,6 +12,7 @@ import matchRoutes from './routes/matchRoutes';
 import staffRoutes from './routes/staffRoutes';
 import staffAuthRoutes from './routes/staffAuthRoutes';
 import contactRoutes from './routes/contactRoutes';
+import schoolReportRoutes from './routes/schoolReportRoutes';
 
 const app: Application = express();
 
@@ -41,6 +42,7 @@ app.use('/api/v1/events', eventRoutes);
 app.use('/api/v1', schoolRoutes);
 app.use('/api/v1', matchRoutes);
 app.use('/api/v1/contact', contactRoutes);
+app.use('/api/v1/school-report', schoolReportRoutes);
 
 app.get('/health', (_req: Request, res: Response) => {
   res.status(200).json({ status: 'ok', message: 'The Youth Contest API is running' });

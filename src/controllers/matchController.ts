@@ -6,6 +6,12 @@ import Team from '../models/Team';
 import School from '../models/School';
 import Event, { EventStatus } from '../models/Event';
 import { emitToEvent } from '../socket';
+import mongoose from 'mongoose';
+
+const supportsTransactions = () => {
+  const topologyType = (mongoose.connection as any)?.client?.topology?.description?.type;
+  return topologyType === 'ReplicaSetWithPrimary' || topologyType === 'Sharded';
+};
 
 // @desc    Create a school matchup manually
 // @route   POST /api/v1/events/:eventId/matchups
@@ -25,12 +31,80 @@ export const createMatchup = asyncHandler(async (req: Request, res: Response) =>
     throw new Error('Event not found');
   }
 
+  if ((stage && stage !== TournamentStage.PRELIMINARY) || event.status !== EventStatus.PRELIMINARY_ROUNDS) {
+    res.status(400);
+    throw new Error('Manual matchup creation is only allowed for Preliminary stage when event is in Preliminary Rounds');
+  }
+
+  if (schoolBId && String(schoolAId) === String(schoolBId)) {
+    res.status(400);
+    throw new Error('schoolAId and schoolBId must be different');
+  }
+
+  const schoolA = await School.findOne({ _id: schoolAId, event: eventId });
+  if (!schoolA) {
+    res.status(400);
+    throw new Error('schoolAId does not belong to this event');
+  }
+
+  let schoolB = null;
+  if (schoolBId) {
+    schoolB = await School.findOne({ _id: schoolBId, event: eventId });
+    if (!schoolB) {
+      res.status(400);
+      throw new Error('schoolBId does not belong to this event');
+    }
+  }
+
+  const overlapQuery = schoolBId
+    ? {
+      event: eventId,
+      stage: TournamentStage.PRELIMINARY,
+      $or: [
+        { schoolA: schoolAId },
+        { schoolB: schoolAId },
+        { schoolA: schoolBId },
+        { schoolB: schoolBId },
+      ],
+    }
+    : {
+      event: eventId,
+      stage: TournamentStage.PRELIMINARY,
+      $or: [{ schoolA: schoolAId }, { schoolB: schoolAId }],
+    };
+
+  const overlappingMatchup = await Matchup.findOne(overlapQuery);
+  if (overlappingMatchup) {
+    res.status(409);
+    throw new Error('One or both schools are already assigned to a preliminary matchup');
+  }
+
   const matchup = await Matchup.create({
     event: String(eventId),
     schoolA: String(schoolAId),
     schoolB: schoolBId ? String(schoolBId) : undefined,
     stage: stage || TournamentStage.PRELIMINARY,
   });
+
+  // For preliminary rounds, generate full cross-school pairings:
+  // each team in school A plays each team in school B (e.g., 3 x 3 = 9 matches).
+  if (schoolBId) {
+    const teamsA = await Team.find({ school: schoolAId, event: String(eventId) }).sort({ teamNumber: 1 });
+    const teamsB = await Team.find({ school: schoolBId, event: String(eventId) }).sort({ teamNumber: 1 });
+
+    for (const teamA of teamsA) {
+      for (const teamB of teamsB) {
+        await Match.create({
+          matchup: matchup._id as any,
+          event: String(eventId),
+          teamA: teamA._id as any,
+          teamB: teamB._id as any,
+          stage: TournamentStage.PRELIMINARY,
+          status: MatchStatus.PENDING,
+        });
+      }
+    }
+  }
 
   emitToEvent(String(eventId), 'matchups:created', { matchups: [matchup] });
 
@@ -49,10 +123,62 @@ export const createMatchesForMatchup = asyncHandler(async (req: Request, res: Re
     throw new Error('teamAId is required');
   }
 
+  if (teamBId && String(teamAId) === String(teamBId)) {
+    res.status(400);
+    throw new Error('teamAId and teamBId must be different');
+  }
+
   const matchup = await Matchup.findById(matchupId);
   if (!matchup) {
     res.status(404);
     throw new Error('Matchup not found');
+  }
+
+  const teamA = await Team.findById(teamAId);
+  if (!teamA) {
+    res.status(404);
+    throw new Error('teamA not found');
+  }
+  if (teamA.event.toString() !== matchup.event.toString()) {
+    res.status(400);
+    throw new Error('teamA does not belong to this matchup event');
+  }
+  if (teamA.school.toString() !== matchup.schoolA.toString() && teamA.school.toString() !== matchup.schoolB?.toString()) {
+    res.status(400);
+    throw new Error('teamA does not belong to either school in this matchup');
+  }
+
+  let teamB = null;
+  if (teamBId) {
+    teamB = await Team.findById(teamBId);
+    if (!teamB) {
+      res.status(404);
+      throw new Error('teamB not found');
+    }
+    if (teamB.event.toString() !== matchup.event.toString()) {
+      res.status(400);
+      throw new Error('teamB does not belong to this matchup event');
+    }
+    if (teamB.school.toString() !== matchup.schoolA.toString() && teamB.school.toString() !== matchup.schoolB?.toString()) {
+      res.status(400);
+      throw new Error('teamB does not belong to either school in this matchup');
+    }
+    if (teamA.school.toString() === teamB.school.toString()) {
+      res.status(400);
+      throw new Error('Both teams cannot be from the same school in one matchup match');
+    }
+  }
+
+  const duplicate = await Match.findOne({
+    matchup: matchupId,
+    $or: [
+      { teamA: teamAId, teamB: teamBId || null },
+      { teamA: teamBId || null, teamB: teamAId },
+    ],
+  });
+  if (duplicate) {
+    res.status(409);
+    throw new Error('This match pairing already exists in the matchup');
   }
 
   const match = await Match.create({
@@ -67,15 +193,70 @@ export const createMatchesForMatchup = asyncHandler(async (req: Request, res: Re
   res.status(201).json(match);
 });
 
+// @desc    Update team pairing for a match within its matchup schools
+// @route   PATCH /api/v1/matches/:id/pairing
+// @access  Private
+export const updateMatchPairing = asyncHandler(async (req: Request, res: Response) => {
+  const { teamAId, teamBId } = req.body;
+  if (!teamAId || !teamBId) {
+    res.status(400);
+    throw new Error('teamAId and teamBId are required');
+  }
+
+  const match = await Match.findById(req.params.id);
+  if (!match) {
+    res.status(404);
+    throw new Error('Match not found');
+  }
+
+  const teamA = await Team.findById(teamAId);
+  const teamB = await Team.findById(teamBId);
+  if (!teamA || !teamB) {
+    res.status(404);
+    throw new Error('One or both teams not found');
+  }
+
+  const teamASchool = teamA.school.toString();
+  const teamBSchool = teamB.school.toString();
+
+  if (teamASchool === teamBSchool) {
+    res.status(400);
+    throw new Error('Selected teams must belong to different schools');
+  }
+
+  match.teamA = teamA._id as any;
+  match.teamB = teamB._id as any;
+  match.winner = undefined;
+  match.loser = undefined;
+  match.winnerSpeakerPoints = 0;
+  match.loserSpeakerPoints = 0;
+  match.status = MatchStatus.PENDING;
+  match.scoredBy = undefined;
+  match.scoredAt = undefined;
+  await match.save();
+
+  res.json(match);
+});
+
 // @desc    Enter or correct a match result
 // @route   PATCH /api/v1/matches/:id/result
 // @access  Private
 export const enterMatchResult = asyncHandler(async (req: Request, res: Response) => {
-  const { winnerId } = req.body;
+  const { winnerId, loserId, teamASpeakerScores, teamBSpeakerScores } = req.body;
 
-  if (!winnerId) {
+  if (!winnerId || !loserId) {
     res.status(400);
-    throw new Error('winnerId is required');
+    throw new Error('winnerId and loserId are required');
+  }
+
+  if (!Array.isArray(teamASpeakerScores) || teamASpeakerScores.length === 0) {
+    res.status(400);
+    throw new Error('teamASpeakerScores are required');
+  }
+
+  if (!Array.isArray(teamBSpeakerScores) || teamBSpeakerScores.length === 0) {
+    res.status(400);
+    throw new Error('teamBSpeakerScores are required');
   }
 
   const match = await Match.findById(req.params.id);
@@ -85,152 +266,203 @@ export const enterMatchResult = asyncHandler(async (req: Request, res: Response)
   }
 
   const validTeams = [match.teamA?.toString(), match.teamB?.toString()].filter(Boolean);
-  if (!validTeams.includes(winnerId.toString())) {
+  if (!validTeams.includes(winnerId.toString()) || !validTeams.includes(loserId.toString())) {
     res.status(400);
-    throw new Error('Winner must be one of the two teams in this match');
+    throw new Error('Winner and loser must be the two teams in this match');
   }
 
-  const isCorrection = match.status === MatchStatus.COMPLETED && match.winner;
+  const winPts = (teamASpeakerScores as any[]).reduce((s: number, m: any) => s + (Number(m.points) || 0), 0) === 
+    (teamBSpeakerScores as any[]).reduce((s: number, m: any) => s + (Number(m.points) || 0), 0)
+    ? (winnerId.toString() === match.teamA?.toString()
+        ? (teamASpeakerScores as any[]).reduce((s: number, m: any) => s + (Number(m.points) || 0), 0)
+        : (teamBSpeakerScores as any[]).reduce((s: number, m: any) => s + (Number(m.points) || 0), 0))
+    : (winnerId.toString() === match.teamA?.toString()
+        ? (teamASpeakerScores as any[]).reduce((s: number, m: any) => s + (Number(m.points) || 0), 0)
+        : (teamBSpeakerScores as any[]).reduce((s: number, m: any) => s + (Number(m.points) || 0), 0));
 
-  if (isCorrection) {
-    const previousWinnerId = match.winner!.toString();
-    const previousLoserId = validTeams.find((id) => id !== previousWinnerId);
+  const losePts = loserId.toString() === match.teamA?.toString()
+    ? (teamASpeakerScores as any[]).reduce((s: number, m: any) => s + (Number(m.points) || 0), 0)
+    : (teamBSpeakerScores as any[]).reduce((s: number, m: any) => s + (Number(m.points) || 0), 0);
 
-    await Team.findByIdAndUpdate(previousWinnerId, {
-      $inc: { totalPoints: -3, matchesWon: -1, matchesPlayed: -1 },
-    });
-    if (previousLoserId) {
-      await Team.findByIdAndUpdate(previousLoserId, { $inc: { matchesPlayed: -1 } });
+  const runUpdates = async (session?: mongoose.ClientSession) => {
+    const isCorrection = match.status === MatchStatus.COMPLETED && match.winner;
+
+    if (isCorrection) {
+      const previousWinnerId = match.winner!.toString();
+      const previousLoserId = match.loser?.toString() || validTeams.find((id) => id !== previousWinnerId);
+      const previousWinnerPts = match.winnerSpeakerPoints ?? 0;
+      const previousLoserPts = match.loserSpeakerPoints ?? 0;
+
+      // Reverse team totals
+      await Team.findByIdAndUpdate(previousWinnerId, {
+        $inc: { totalPoints: -previousWinnerPts, matchesWon: -1, matchesPlayed: -1 },
+      }, session ? { session } : {});
+      if (previousLoserId) {
+        await Team.findByIdAndUpdate(previousLoserId, {
+          $inc: { totalPoints: -previousLoserPts, matchesPlayed: -1 },
+        }, session ? { session } : {});
+      }
+
+      // Reverse individual member speaker points
+      const prevAScores = match.teamASpeakerScores ?? [];
+      const prevBScores = match.teamBSpeakerScores ?? [];
+      const teamADoc = await Team.findById(match.teamA);
+      const teamBDoc = match.teamB ? await Team.findById(match.teamB) : null;
+
+      if (teamADoc) {
+        for (const s of prevAScores) {
+          const member = teamADoc.members.find(m => m._id?.toString() === s.memberId.toString());
+          if (member) member.totalSpeakerPoints = (member.totalSpeakerPoints ?? 0) - s.points;
+        }
+        await teamADoc.save(session ? { session } : {});
+      }
+      if (teamBDoc) {
+        for (const s of prevBScores) {
+          const member = teamBDoc.members.find(m => m._id?.toString() === s.memberId.toString());
+          if (member) member.totalSpeakerPoints = (member.totalSpeakerPoints ?? 0) - s.points;
+        }
+        await teamBDoc.save(session ? { session } : {});
+      }
     }
+
+    // Apply new team totals
+    await Team.findByIdAndUpdate(String(winnerId), {
+      $inc: { totalPoints: winPts, matchesWon: 1, matchesPlayed: 1 },
+    }, session ? { session } : {});
+    await Team.findByIdAndUpdate(String(loserId), {
+      $inc: { totalPoints: losePts, matchesPlayed: 1 },
+    }, session ? { session } : {});
+
+    // Apply new individual member speaker points
+    const teamADoc2 = await Team.findById(match.teamA);
+    const teamBDoc2 = match.teamB ? await Team.findById(match.teamB) : null;
+
+    if (teamADoc2) {
+      for (const s of teamASpeakerScores as any[]) {
+        const member = teamADoc2.members.find(m => m._id?.toString() === s.memberId);
+        if (member) member.totalSpeakerPoints = (member.totalSpeakerPoints ?? 0) + (Number(s.points) || 0);
+      }
+      await teamADoc2.save(session ? { session } : {});
+    }
+    if (teamBDoc2) {
+      for (const s of teamBSpeakerScores as any[]) {
+        const member = teamBDoc2.members.find(m => m._id?.toString() === s.memberId);
+        if (member) member.totalSpeakerPoints = (member.totalSpeakerPoints ?? 0) + (Number(s.points) || 0);
+      }
+      await teamBDoc2.save(session ? { session } : {});
+    }
+
+    match.winner = winnerId;
+    match.loser = loserId as any;
+    match.winnerSpeakerPoints = winPts;
+    match.loserSpeakerPoints = losePts;
+    match.teamASpeakerScores = teamASpeakerScores.map((s: any) => ({ memberId: s.memberId, points: Number(s.points) || 0 }));
+    match.teamBSpeakerScores = teamBSpeakerScores.map((s: any) => ({ memberId: s.memberId, points: Number(s.points) || 0 }));
+    match.status = MatchStatus.COMPLETED;
+    match.scoredBy = req.user?._id as any;
+    match.scoredAt = new Date();
+    await match.save(session ? { session } : {});
+  };
+
+  if (supportsTransactions()) {
+    const session = await mongoose.startSession();
+    try {
+      session.startTransaction();
+      await runUpdates(session);
+      await session.commitTransaction();
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
+    }
+  } else {
+    await runUpdates();
   }
-
-  const newLoserId = validTeams.find((id) => id !== String(winnerId));
-
-  await Team.findByIdAndUpdate(String(winnerId), {
-    $inc: { totalPoints: 3, matchesWon: 1, matchesPlayed: 1 },
-  });
-  if (newLoserId) {
-    await Team.findByIdAndUpdate(newLoserId, { $inc: { matchesPlayed: 1 } });
-  }
-
-  match.winner = winnerId;
-  match.status = MatchStatus.COMPLETED;
-  match.scoredBy = req.user?._id as any;
-  match.scoredAt = new Date();
-  await match.save();
 
   emitToEvent(match.event.toString(), 'match:updated', match);
 
-  // Check for bracket advancement
-  if ([TournamentStage.QUARTER_FINAL, TournamentStage.SEMI_FINAL, TournamentStage.FINAL].includes(match.stage)) {
-    await checkAndAdvanceBracket(match.event.toString(), match.stage);
+  if ([TournamentStage.ROUND_OF_16, TournamentStage.QUARTER_FINAL, TournamentStage.SEMI_FINAL, TournamentStage.FINAL].includes(match.stage)) {
+    await advanceWinnerToNextRound(match.event.toString(), match.stage, match.bracketSlot ?? 0, match.winner as mongoose.Types.ObjectId);
   }
 
   res.json(match);
 });
 
-// Helper to advance bracket stages automatically
-async function checkAndAdvanceBracket(eventId: string, currentStage: TournamentStage) {
-  const matches = await Match.find({ event: eventId, stage: currentStage });
-  const allCompleted = matches.every((m) => m.status === MatchStatus.COMPLETED);
+// Helper to advance a single winner into the next bracket slot immediately after scoring
+async function advanceWinnerToNextRound(eventId: string, currentStage: TournamentStage, currentSlot: number, winnerId: mongoose.Types.ObjectId) {
+  const winner = await Team.findById(winnerId);
+  if (!winner) return;
 
-  if (!allCompleted) return;
+  // Determine next stage and which slot the winner goes into
+  let nextStage: TournamentStage | null = null;
+  let nextSlot: number;
+  let position: 'teamA' | 'teamB';
 
-  const event = await Event.findById(eventId);
-  if (!event) return;
-
-  if (currentStage === TournamentStage.QUARTER_FINAL) {
-    const sfExists = await Match.exists({ event: eventId, stage: TournamentStage.SEMI_FINAL });
-    if (sfExists) return;
-
-    const pairings = [[0, 3], [1, 2]];
-
-    for (let i = 0; i < pairings.length; i++) {
-      const matchA = matches.find((m) => m.bracketSlot === pairings[i][0]);
-      const matchB = matches.find((m) => m.bracketSlot === pairings[i][1]);
-
-      if (matchA?.winner && matchB?.winner) {
-        const teamA = await Team.findById(matchA.winner);
-        const teamB = await Team.findById(matchB.winner);
-
-        if (!teamA || !teamB) {
-          console.error(`[bracket] QF->SF: could not find teams for slot ${i}`);
-          continue;
-        }
-
-        const matchup = await Matchup.create({
-          event: eventId,
-          schoolA: teamA.school as any,
-          schoolB: teamB.school as any,
-          stage: TournamentStage.SEMI_FINAL,
-          bracketSlot: i,
-        });
-
-        await Match.create({
-          matchup: matchup._id as any,
-          event: eventId,
-          teamA: teamA._id as any,
-          teamB: teamB._id as any,
-          stage: TournamentStage.SEMI_FINAL,
-          bracketSlot: i,
-          status: MatchStatus.PENDING,
-        });
-      }
-    }
-
-    event.status = EventStatus.BRACKET_STAGE;
-    await event.save();
-
-    const sfMatches = await Match.find({ event: eventId, stage: TournamentStage.SEMI_FINAL })
-      .populate('teamA', 'name')
-      .populate('teamB', 'name');
-    emitToEvent(eventId, 'bracket:updated', { stage: TournamentStage.SEMI_FINAL, matches: sfMatches });
-    emitToEvent(eventId, 'event:statusChanged', { status: event.status });
-
+  if (currentStage === TournamentStage.ROUND_OF_16) {
+    nextStage = TournamentStage.QUARTER_FINAL;
+    // R16 slots 0-7 → QF slots 0-3, two R16 winners per QF match
+    // Pairing: [0,7]→QF0, [1,6]→QF1, [2,5]→QF2, [3,4]→QF3
+    const r16Pairings: [number, number, number][] = [
+      [0, 7, 0], [1, 6, 1], [2, 5, 2], [3, 4, 3]
+    ];
+    const pair = r16Pairings.find(([a, b]) => a === currentSlot || b === currentSlot);
+    if (!pair) return;
+    nextSlot = pair[2];
+    position = currentSlot === pair[0] ? 'teamA' : 'teamB';
+  } else if (currentStage === TournamentStage.QUARTER_FINAL) {
+    nextStage = TournamentStage.SEMI_FINAL;
+    // QF slots 0-3 → SF slots 0-1
+    // Pairing: [0,3]→SF0, [1,2]→SF1
+    const qfPairings: [number, number, number][] = [
+      [0, 3, 0], [1, 2, 1]
+    ];
+    const pair = qfPairings.find(([a, b]) => a === currentSlot || b === currentSlot);
+    if (!pair) return;
+    nextSlot = pair[2];
+    position = currentSlot === pair[0] ? 'teamA' : 'teamB';
   } else if (currentStage === TournamentStage.SEMI_FINAL) {
-    const finalExists = await Match.exists({ event: eventId, stage: TournamentStage.FINAL });
-    if (finalExists) return;
+    nextStage = TournamentStage.FINAL;
+    nextSlot = 0;
+    position = currentSlot === 0 ? 'teamA' : 'teamB';
+  } else {
+    // FINAL completed — mark event as done
+    const event = await Event.findById(eventId);
+    if (event) { event.status = EventStatus.COMPLETED; await event.save(); }
+    emitToEvent(eventId, 'event:statusChanged', { status: EventStatus.COMPLETED });
+    return;
+  }
 
-    const matchA = matches.find((m) => m.bracketSlot === 0);
-    const matchB = matches.find((m) => m.bracketSlot === 1);
+  // Find or create the next-round match for this slot
+  let nextMatch = await Match.findOne({ event: eventId, stage: nextStage, bracketSlot: nextSlot });
 
-    if (matchA?.winner && matchB?.winner) {
-      const teamA = await Team.findById(matchA.winner);
-      const teamB = await Team.findById(matchB.winner);
+  if (!nextMatch) {
+    // Create a placeholder match with just this team
+    nextMatch = await Match.create({
+      event: eventId,
+      stage: nextStage,
+      bracketSlot: nextSlot,
+      teamA: position === 'teamA' ? winner._id : undefined,
+      teamB: position === 'teamB' ? winner._id : undefined,
+      status: MatchStatus.PENDING,
+    });
+  } else {
+    // Slot the winner into the correct position
+    if (position === 'teamA') nextMatch.teamA = winner._id as any;
+    else nextMatch.teamB = winner._id as any;
+    await nextMatch.save();
+  }
 
-      if (!teamA || !teamB) {
-        console.error('[bracket] SF->Final: could not find teams');
-        return;
-      }
+  // Emit updated bracket so frontend refreshes immediately
+  const updatedMatches = await Match.find({ event: eventId, stage: nextStage })
+    .populate('teamA', 'name totalPoints members')
+    .populate('teamB', 'name totalPoints members')
+    .populate('winner', 'name totalPoints');
+  emitToEvent(eventId, 'bracket:updated', { stage: nextStage, matches: updatedMatches });
 
-      const matchup = await Matchup.create({
-        event: eventId,
-        schoolA: teamA.school as any,
-        schoolB: teamB.school as any,
-        stage: TournamentStage.FINAL,
-        bracketSlot: 0,
-      });
-
-      await Match.create({
-        matchup: matchup._id as any,
-        event: eventId,
-        teamA: teamA._id as any,
-        teamB: teamB._id as any,
-        stage: TournamentStage.FINAL,
-        bracketSlot: 0,
-        status: MatchStatus.PENDING,
-      });
-
-      const finalMatch = await Match.findOne({ event: eventId, stage: TournamentStage.FINAL })
-        .populate('teamA', 'name')
-        .populate('teamB', 'name');
-      emitToEvent(eventId, 'bracket:updated', { stage: TournamentStage.FINAL, matches: [finalMatch] });
-    }
-
-  } else if (currentStage === TournamentStage.FINAL) {
-    event.status = EventStatus.COMPLETED;
-    await event.save();
-    emitToEvent(eventId, 'event:statusChanged', { status: event.status });
+  // If this is the Final and it now has both teams, also emit bracket:generated
+  if (nextStage === TournamentStage.FINAL && nextMatch.teamA && nextMatch.teamB) {
+    emitToEvent(eventId, 'bracket:generated', { stage: nextStage });
   }
 }
 
@@ -252,57 +484,95 @@ export const autoAssignMatchups = asyncHandler(async (req: Request, res: Respons
     throw new Error('At least 2 schools are required to assign matchups');
   }
 
-  const shuffled = [...schools].sort(() => Math.random() - 0.5);
-  const matchupsCreated: any[] = [];
+  const teams = await Team.find({ event: eventId });
+  let activeTeams = [...teams];
   const byeSchools: string[] = [];
 
-  for (let i = 0; i < shuffled.length; i += 2) {
-    const schoolA = shuffled[i];
-    const schoolB = shuffled[i + 1];
+  if (schools.length % 2 !== 0) {
+    const shuffledSchools = [...schools].sort(() => Math.random() - 0.5);
+    const byeSchool = shuffledSchools[0];
+    byeSchools.push(byeSchool.name);
+    activeTeams = activeTeams.filter(t => t.school.toString() !== byeSchool._id.toString());
+  }
 
-    if (!schoolB) {
-      byeSchools.push(schoolA.name);
-      continue;
-    }
+  let bestEdges: [string, string][] = [];
+  let maxEdges = 0;
 
-    const matchup = await Matchup.create({
-      event: String(eventId),
-      schoolA: schoolA._id as any,
-      schoolB: schoolB._id as any,
-      stage: TournamentStage.PRELIMINARY,
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const edges: [string, string][] = [];
+    const matchCounts = new Map<string, number>();
+    const schoolOpponents = new Map<string, Set<string>>(); // Track which schools each team has faced
+    activeTeams.forEach(t => {
+      matchCounts.set(t._id.toString(), 0);
+      schoolOpponents.set(t._id.toString(), new Set<string>());
     });
 
-    const teamsA = await Team.find({ school: schoolA._id, event: String(eventId) });
-    const teamsB = await Team.find({ school: schoolB._id, event: String(eventId) });
-    const pairCount = Math.min(teamsA.length, teamsB.length);
-    const unmatchedA = teamsA.length - pairCount;
-    const unmatchedB = teamsB.length - pairCount;
+    let stuck = false;
+    while (true) {
+      const needing = activeTeams.filter(t => matchCounts.get(t._id.toString())! < 3);
+      if (needing.length === 0) break;
 
-    for (let j = 0; j < pairCount; j++) {
-      await Match.create({
-        matchup: matchup._id as any,
-        event: String(eventId),
-        teamA: teamsA[j]._id as any,
-        teamB: teamsB[j]._id as any,
-        stage: TournamentStage.PRELIMINARY,
-        status: MatchStatus.PENDING,
+      needing.sort((a, b) => matchCounts.get(b._id.toString())! - matchCounts.get(a._id.toString())!);
+      const t1 = needing[0];
+      const t1SchoolId = t1.school.toString();
+      const t1FacedSchools = schoolOpponents.get(t1._id.toString())!;
+
+      const candidates = needing.filter(t2 => {
+        const t2SchoolId = t2.school.toString();
+        return (
+          t1._id.toString() !== t2._id.toString() &&
+          t1SchoolId !== t2SchoolId && // Different schools
+          !t1FacedSchools.has(t2SchoolId) && // t1 hasn't faced any team from t2's school
+          !schoolOpponents.get(t2._id.toString())!.has(t1SchoolId) // t2 hasn't faced any team from t1's school
+        );
       });
+
+      if (candidates.length === 0) {
+        stuck = true;
+        break;
+      }
+
+      const t2 = candidates[Math.floor(Math.random() * candidates.length)];
+      const t2SchoolId = t2.school.toString();
+
+      edges.push([t1._id.toString(), t2._id.toString()]);
+      matchCounts.set(t1._id.toString(), matchCounts.get(t1._id.toString())! + 1);
+      matchCounts.set(t2._id.toString(), matchCounts.get(t2._id.toString())! + 1);
+      
+      // Mark that these teams have now faced each other's schools
+      schoolOpponents.get(t1._id.toString())!.add(t2SchoolId);
+      schoolOpponents.get(t2._id.toString())!.add(t1SchoolId);
     }
 
-    matchupsCreated.push({
-      ...matchup.toObject(),
-      ...(unmatchedA > 0 && { unmatchedTeamsA: unmatchedA }),
-      ...(unmatchedB > 0 && { unmatchedTeamsB: unmatchedB }),
+    if (!stuck) {
+      bestEdges = edges;
+      break;
+    }
+    if (edges.length > maxEdges) {
+      maxEdges = edges.length;
+      bestEdges = edges;
+    }
+  }
+
+  const matchesCreated: any[] = [];
+  for (const edge of bestEdges) {
+    const match = await Match.create({
+      event: String(eventId),
+      teamA: edge[0],
+      teamB: edge[1],
+      stage: TournamentStage.PRELIMINARY,
+      status: MatchStatus.PENDING,
     });
+    matchesCreated.push(match);
   }
 
   const response = {
-    matchups: matchupsCreated,
+    message: `Generated ${matchesCreated.length} preliminary matches.`,
+    matchesCount: matchesCreated.length,
     ...(byeSchools.length > 0 && { byeSchools, notice: 'Some schools received a bye due to odd count' }),
   };
 
   emitToEvent(String(eventId), 'matchups:created', response);
-
   res.status(201).json(response);
 });
 
@@ -319,15 +589,19 @@ export const generateBracket = asyncHandler(async (req: Request, res: Response) 
     throw new Error('Event must be in Preliminary Rounds stage to generate the bracket');
   }
 
+  const schoolsCount = await School.countDocuments({ event: eventId });
+  const useRoundOf16 = schoolsCount > 18;
+  const numTeams = useRoundOf16 ? 16 : 8;
+
   let teams: Awaited<ReturnType<typeof Team.find>>;
 
   if (teamIds) {
-    if (!Array.isArray(teamIds) || teamIds.length !== 8) {
+    if (!Array.isArray(teamIds) || teamIds.length !== numTeams) {
       res.status(400);
-      throw new Error('teamIds must be an array of exactly 8 team IDs');
+      throw new Error(`teamIds must be an array of exactly ${numTeams} team IDs`);
     }
     const found = await Team.find({ _id: { $in: teamIds }, event: eventId });
-    if (found.length !== 8) {
+    if (found.length !== numTeams) {
       res.status(400);
       throw new Error('One or more teamIds are invalid or do not belong to this event');
     }
@@ -335,19 +609,36 @@ export const generateBracket = asyncHandler(async (req: Request, res: Response) 
   } else {
     teams = await Team.find({ event: eventId })
       .sort({ totalPoints: -1, matchesPlayed: 1 })
-      .limit(8);
-    if (teams.length < 8) {
+      .limit(numTeams);
+    if (teams.length < numTeams) {
       res.status(400);
-      throw new Error(`Not enough teams to form Power 8 — only ${teams.length} teams found`);
+      throw new Error(`Not enough teams to form bracket — only ${teams.length} teams found`);
     }
   }
 
-  const seeds = [
-    [teams[0], teams[7]],
-    [teams[1], teams[6]],
-    [teams[2], teams[5]],
-    [teams[3], teams[4]],
-  ];
+  let seeds;
+  let stage;
+  if (useRoundOf16) {
+    stage = TournamentStage.ROUND_OF_16;
+    seeds = [
+      [teams[0], teams[15]],
+      [teams[1], teams[14]],
+      [teams[2], teams[13]],
+      [teams[3], teams[12]],
+      [teams[4], teams[11]],
+      [teams[5], teams[10]],
+      [teams[6], teams[9]],
+      [teams[7], teams[8]],
+    ];
+  } else {
+    stage = TournamentStage.QUARTER_FINAL;
+    seeds = [
+      [teams[0], teams[7]],
+      [teams[1], teams[6]],
+      [teams[2], teams[5]],
+      [teams[3], teams[4]],
+    ];
+  }
 
   const matchups: any[] = [];
 
@@ -357,7 +648,7 @@ export const generateBracket = asyncHandler(async (req: Request, res: Response) 
       event: String(eventId),
       schoolA: teamA.school as any,
       schoolB: teamB.school as any,
-      stage: TournamentStage.QUARTER_FINAL,
+      stage: stage,
       bracketSlot: i,
     });
 
@@ -366,7 +657,7 @@ export const generateBracket = asyncHandler(async (req: Request, res: Response) 
       event: String(eventId),
       teamA: teamA._id as any,
       teamB: teamB._id as any,
-      stage: TournamentStage.QUARTER_FINAL,
+      stage: stage,
       bracketSlot: i,
       status: MatchStatus.PENDING,
     });
@@ -422,16 +713,59 @@ export const voidMatchResult = asyncHandler(async (req: Request, res: Response) 
   }
 
   const winnerId = match.winner.toString();
-  const loserId = [match.teamA?.toString(), match.teamB?.toString()].find((id) => id && id !== winnerId);
+  const loserId = match.loser?.toString() || [match.teamA?.toString(), match.teamB?.toString()].find((id) => id && id !== winnerId);
+  const winnerPts = match.winnerSpeakerPoints ?? 3;
+  const loserPts = match.loserSpeakerPoints ?? 0;
 
-  await Team.findByIdAndUpdate(winnerId, { $inc: { totalPoints: -3, matchesWon: -1, matchesPlayed: -1 } });
-  if (loserId) await Team.findByIdAndUpdate(loserId, { $inc: { matchesPlayed: -1 } });
+  const runVoid = async (session?: mongoose.ClientSession) => {
+    await Team.findByIdAndUpdate(winnerId, { $inc: { totalPoints: -winnerPts, matchesWon: -1, matchesPlayed: -1 } }, session ? { session } : {});
+    if (loserId) await Team.findByIdAndUpdate(loserId, { $inc: { totalPoints: -loserPts, matchesPlayed: -1 } }, session ? { session } : {});
 
-  match.winner = undefined;
-  match.status = MatchStatus.PENDING;
-  match.scoredBy = undefined;
-  match.scoredAt = undefined;
-  await match.save();
+    // Reverse individual member speaker points
+    const teamADoc = await Team.findById(match.teamA);
+    const teamBDoc = match.teamB ? await Team.findById(match.teamB) : null;
+    if (teamADoc) {
+      for (const s of match.teamASpeakerScores ?? []) {
+        const member = teamADoc.members.find(m => m._id?.toString() === s.memberId.toString());
+        if (member) member.totalSpeakerPoints = (member.totalSpeakerPoints ?? 0) - s.points;
+      }
+      await teamADoc.save(session ? { session } : {});
+    }
+    if (teamBDoc) {
+      for (const s of match.teamBSpeakerScores ?? []) {
+        const member = teamBDoc.members.find(m => m._id?.toString() === s.memberId.toString());
+        if (member) member.totalSpeakerPoints = (member.totalSpeakerPoints ?? 0) - s.points;
+      }
+      await teamBDoc.save(session ? { session } : {});
+    }
+
+    match.winner = undefined;
+    match.loser = undefined;
+    match.winnerSpeakerPoints = 0;
+    match.loserSpeakerPoints = 0;
+    match.teamASpeakerScores = [];
+    match.teamBSpeakerScores = [];
+    match.status = MatchStatus.PENDING;
+    match.scoredBy = undefined;
+    match.scoredAt = undefined;
+    await match.save(session ? { session } : {});
+  };
+
+  if (supportsTransactions()) {
+    const session = await mongoose.startSession();
+    try {
+      session.startTransaction();
+      await runVoid(session);
+      await session.commitTransaction();
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
+    }
+  } else {
+    await runVoid();
+  }
 
   emitToEvent(match.event.toString(), 'match:updated', match);
 
@@ -450,16 +784,66 @@ export const cancelPreliminaryMatchups = asyncHandler(async (req: Request, res: 
     throw new Error('Event must be in Preliminary Rounds stage to cancel matchups');
   }
 
-  const hasResults = await Match.exists({ event: eventId, stage: TournamentStage.PRELIMINARY, status: MatchStatus.COMPLETED });
-  if (hasResults) {
-    res.status(400);
-    throw new Error('Cannot cancel — some preliminary matches already have results');
+  const prelimMatches = await Match.find({ event: eventId, stage: TournamentStage.PRELIMINARY });
+
+  const runReset = async (session?: mongoose.ClientSession) => {
+    const teamAdjustments = new Map<string, { totalPoints: number; matchesWon: number; matchesPlayed: number }>();
+
+    for (const match of prelimMatches) {
+      if (match.status !== MatchStatus.COMPLETED || !match.winner) continue;
+
+      const winnerId = match.winner.toString();
+      const loserId =
+        match.loser?.toString() ||
+        [match.teamA?.toString(), match.teamB?.toString()].find((id) => id && id !== winnerId);
+      const winnerPts = match.winnerSpeakerPoints ?? 3;
+      const loserPts = match.loserSpeakerPoints ?? 0;
+
+      const w = teamAdjustments.get(winnerId) || { totalPoints: 0, matchesWon: 0, matchesPlayed: 0 };
+      w.totalPoints -= winnerPts;
+      w.matchesWon -= 1;
+      w.matchesPlayed -= 1;
+      teamAdjustments.set(winnerId, w);
+
+      if (loserId) {
+        const l = teamAdjustments.get(loserId) || { totalPoints: 0, matchesWon: 0, matchesPlayed: 0 };
+        l.totalPoints -= loserPts;
+        l.matchesPlayed -= 1;
+        teamAdjustments.set(loserId, l);
+      }
+    }
+
+    if (teamAdjustments.size > 0) {
+      const ops = [...teamAdjustments.entries()].map(([teamId, inc]) => ({
+        updateOne: {
+          filter: { _id: teamId },
+          update: { $inc: inc },
+        },
+      }));
+      await Team.bulkWrite(ops, session ? { session } : {});
+    }
+
+    await Match.deleteMany({ event: eventId, stage: TournamentStage.PRELIMINARY }, session ? { session } : {});
+    await Matchup.deleteMany({ event: eventId, stage: TournamentStage.PRELIMINARY }, session ? { session } : {});
+  };
+
+  if (supportsTransactions()) {
+    const session = await mongoose.startSession();
+    try {
+      session.startTransaction();
+      await runReset(session);
+      await session.commitTransaction();
+    } catch (error) {
+      await session.abortTransaction();
+      throw error;
+    } finally {
+      session.endSession();
+    }
+  } else {
+    await runReset();
   }
 
-  await Match.deleteMany({ event: eventId, stage: TournamentStage.PRELIMINARY });
-  await Matchup.deleteMany({ event: eventId, stage: TournamentStage.PRELIMINARY });
-
-  res.json({ message: 'All preliminary matchups cancelled. You may re-assign.' });
+  res.json({ message: 'All preliminary matchups and results reset. You may re-assign.' });
 });
 
 // @desc    Cancel bracket generation (revert event to Preliminary Rounds)
@@ -497,10 +881,36 @@ export const cancelBracket = asyncHandler(async (req: Request, res: Response) =>
 // @route   GET /api/v1/events/:eventId/matchups
 // @access  Public
 export const getEventMatchups = asyncHandler(async (req: Request, res: Response) => {
-  const matchups = await Matchup.find({ event: req.params.eventId })
-    .populate('schoolA', 'name')
-    .populate('schoolB', 'name');
-  res.json(matchups);
+  const { eventId } = req.params;
+  
+  const prelimMatches = await Match.find({ event: eventId, stage: TournamentStage.PRELIMINARY })
+    .populate('teamA', 'name members')
+    .populate('teamB', 'name members')
+    .populate('winner', 'name');
+
+  const teamSchedulesMap = new Map<string, any>();
+  const teams = await Team.find({ event: eventId }).populate('school', 'name');
+
+  teams.forEach(team => {
+    teamSchedulesMap.set(team._id.toString(), {
+      _id: team._id.toString(),
+      team: { _id: team._id, name: team.name, members: team.members },
+      matches: []
+    });
+  });
+
+  prelimMatches.forEach(m => {
+    if (m.teamA) {
+      const scheduleA = teamSchedulesMap.get(m.teamA._id.toString());
+      if (scheduleA) scheduleA.matches.push(m);
+    }
+    if (m.teamB) {
+      const scheduleB = teamSchedulesMap.get(m.teamB._id.toString());
+      if (scheduleB) scheduleB.matches.push(m);
+    }
+  });
+
+  res.json(Array.from(teamSchedulesMap.values()));
 });
 
 // @desc    Get all matches for a matchup
@@ -519,15 +929,15 @@ export const getMatchupMatches = asyncHandler(async (req: Request, res: Response
 // @route   GET /api/v1/events/:eventId/bracket
 // @access  Public
 export const getEventBracket = asyncHandler(async (req: Request, res: Response) => {
-  const stages = [TournamentStage.QUARTER_FINAL, TournamentStage.SEMI_FINAL, TournamentStage.FINAL];
+  const stages = [TournamentStage.ROUND_OF_16, TournamentStage.QUARTER_FINAL, TournamentStage.SEMI_FINAL, TournamentStage.FINAL];
 
   const bracket: Record<string, any[]> = {};
 
   for (const stage of stages) {
     const matches = await Match.find({ event: req.params.eventId, stage })
-      .populate('teamA', 'name totalPoints')
-      .populate('teamB', 'name totalPoints')
-      .populate('winner', 'name');
+      .populate('teamA', 'name totalPoints members')
+      .populate('teamB', 'name totalPoints members')
+      .populate('winner', 'name totalPoints');
     bracket[stage] = matches;
   }
 

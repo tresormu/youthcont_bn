@@ -5,7 +5,7 @@ export interface IUser extends Document {
   name: string;
   email: string;
   passwordHash: string;
-  role: 'seed_admin' | 'staff';
+  role: 'seed_admin' | 'staff' | 'school_owner';
   isActive: boolean;
   pinCode?: string;
   matchPassword(password: string): Promise<boolean>;
@@ -28,7 +28,7 @@ const userSchema: Schema = new Schema({
   },
   role: {
     type: String,
-    enum: ['seed_admin', 'staff'],
+    enum: ['seed_admin', 'staff', 'school_owner'],
     default: 'staff'
   },
   isActive: {

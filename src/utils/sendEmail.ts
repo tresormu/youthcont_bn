@@ -346,3 +346,114 @@ export const sendStaffInviteEmail = async (email: string, pinCode: string) => {
     `,
   });
 };
+
+export const sendSchoolOwnerAccessEmail = async (data: {
+  email: string;
+  schoolName: string;
+  tournamentName: string;
+  accessCode: string;
+  expiresAt: Date;
+  loginUrl: string;
+}) => {
+  const year = new Date().getFullYear();
+  const expiryStr = data.expiresAt.toLocaleString('en-US', {
+    dateStyle: 'medium', timeStyle: 'short',
+  });
+
+  await transporter.sendMail({
+    from: `"Youth Contest" <${config.smtp.from}>`,
+    to: data.email,
+    subject: `Your School Report Access — ${data.tournamentName}`,
+    html: `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>School Report Access</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f4f6f9;font-family:'Segoe UI',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6f9;padding:40px 0;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:10px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.08);">
+
+          <!-- Header -->
+          <tr>
+            <td style="background:linear-gradient(135deg,#1a1a2e 0%,#16213e 60%,#0f3460 100%);padding:40px 48px;text-align:center;">
+              <h1 style="margin:0;color:#ffffff;font-size:26px;font-weight:700;letter-spacing:1px;">Youth Contest</h1>
+              <p style="margin:8px 0 0;color:#a0b4cc;font-size:13px;letter-spacing:2px;text-transform:uppercase;">School Report Access</p>
+            </td>
+          </tr>
+
+          <!-- Body -->
+          <tr>
+            <td style="padding:48px;">
+              <h2 style="margin:0 0 12px;color:#1a1a2e;font-size:22px;font-weight:600;">Your access is ready 🎓</h2>
+              <p style="margin:0 0 8px;color:#4a5568;font-size:15px;line-height:1.7;">
+                You have been granted access to view the performance report for <strong>${data.schoolName}</strong> in <strong>${data.tournamentName}</strong>.
+              </p>
+              <p style="margin:0 0 32px;color:#4a5568;font-size:15px;line-height:1.7;">
+                Use the credentials below to log in and view your school's results.
+              </p>
+
+              <!-- Credentials Box -->
+              <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:32px;">
+                <tr>
+                  <td style="padding:28px 32px;">
+                    <p style="margin:0 0 6px;color:#718096;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:1px;">Your Login Email</p>
+                    <p style="margin:0 0 24px;color:#1a1a2e;font-size:16px;font-weight:600;">${data.email}</p>
+
+                    <p style="margin:0 0 6px;color:#718096;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:1px;">Access Code</p>
+                    <p style="margin:0 0 24px;">
+                      <code style="background:#edf2f7;color:#2d3748;padding:8px 18px;border-radius:5px;font-size:22px;letter-spacing:6px;font-weight:800;">${data.accessCode}</code>
+                    </p>
+
+                    <p style="margin:0 0 6px;color:#718096;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:1px;">Access Expires</p>
+                    <p style="margin:0;color:#e53e3e;font-size:14px;font-weight:600;">${expiryStr}</p>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- CTA Button -->
+              <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:32px;">
+                <tr>
+                  <td align="center">
+                    <a href="${data.loginUrl}"
+                      style="display:inline-block;background:linear-gradient(135deg,#0f3460,#16213e);color:#ffffff;text-decoration:none;font-size:15px;font-weight:600;padding:14px 40px;border-radius:7px;letter-spacing:0.5px;">
+                      View My School Report &rarr;
+                    </a>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Warning -->
+              <table width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="background:#fff8f0;border-left:4px solid #ed8936;border-radius:0 6px 6px 0;padding:16px 20px;">
+                    <p style="margin:0;color:#7b341e;font-size:13px;line-height:1.6;">
+                      <strong>⚠ Important:</strong> This access link and code expire on <strong>${expiryStr}</strong>. Do not share your credentials with others.
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background-color:#f8fafc;border-top:1px solid #e2e8f0;padding:28px 48px;text-align:center;">
+              <p style="margin:0 0 6px;color:#a0aec0;font-size:12px;">This is an automated message — please do not reply to this email.</p>
+              <p style="margin:0;color:#a0aec0;font-size:12px;">&copy; ${year} Youth Contest. All rights reserved.</p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+    `,
+  });
+};

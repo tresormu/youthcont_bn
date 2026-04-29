@@ -1,8 +1,10 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
 export interface ITeamMember {
+  _id?: mongoose.Types.ObjectId;
   fullName: string;
   speakerOrder: number; // 1, 2, or 3
+  totalSpeakerPoints?: number;
 }
 
 export interface ITeam extends Document {
@@ -17,8 +19,9 @@ export interface ITeam extends Document {
 }
 
 const teamMemberSchema = new Schema({
-  fullName: { type: String, required: true },
-  speakerOrder: { type: Number, required: true, min: 1, max: 3 }
+  fullName: { type: String, default: '' },
+  speakerOrder: { type: Number, required: true, min: 1, max: 3 },
+  totalSpeakerPoints: { type: Number, default: 0 }
 });
 
 const teamSchema: Schema = new Schema({

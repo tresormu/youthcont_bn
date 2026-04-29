@@ -2,6 +2,7 @@ import mongoose, { Schema, Document } from 'mongoose';
 
 export enum TournamentStage {
   PRELIMINARY = 'Prelim',
+  ROUND_OF_16 = 'R16',
   QUARTER_FINAL = 'QF',
   SEMI_FINAL = 'SF',
   FINAL = 'Final'
@@ -12,7 +13,7 @@ export interface IMatchup extends Document {
   schoolA: mongoose.Types.ObjectId;
   schoolB?: mongoose.Types.ObjectId; // Optional in case of byes or bracket placeholders
   stage: TournamentStage;
-  bracketSlot?: number; // 0-3 for QF, 0-1 for SF, 0 for Final
+  bracketSlot?: number; // 0-7 for R16, 0-3 for QF, 0-1 for SF, 0 for Final
 }
 
 const matchupSchema: Schema = new Schema({

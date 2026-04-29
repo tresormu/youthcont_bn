@@ -3,6 +3,7 @@ import asyncHandler from '../utils/asyncHandler';
 import School from '../models/School';
 import Event, { EventStatus } from '../models/Event';
 import { emitToEvent } from '../socket';
+import mongoose from 'mongoose';
 
 // @desc    Register a school for an event
 // @route   POST /api/v1/events/:eventId/schools
@@ -46,13 +47,50 @@ export const registerSchool = asyncHandler(async (req: Request, res: Response) =
 // @route   GET /api/v1/events/:eventId/schools
 // @access  Public
 export const getSchoolsByEvent = asyncHandler(async (req: Request, res: Response) => {
-  const schools = await School.find({ event: req.params.eventId }).sort({ name: 1 });
+  const eventId = String(req.params.eventId);
+  const eventObjectId = new mongoose.Types.ObjectId(eventId);
+  const schools = await School.aggregate([
+    { $match: { event: eventObjectId } },
+    {
+      $lookup: {
+        from: 'teams',
+        localField: '_id',
+        foreignField: 'school',
+        as: 'teams',
+      },
+    },
+    {
+      $lookup: {
+        from: 'publicspeakers',
+        localField: '_id',
+        foreignField: 'school',
+        as: 'publicSpeakers',
+      },
+    },
+    {
+      $addFields: {
+        teamCount: { $size: '$teams' },
+        publicSpeakerCount: { $size: '$publicSpeakers' },
+      },
+    },
+    { $sort: { name: 1 } },
+  ]);
   res.json(schools);
 });
 
-// @desc    Update a school
-// @route   PATCH /api/v1/events/:eventId/schools/:schoolId
-// @access  Private
+// @desc    Get one school by ID
+// @route   GET /api/v1/schools/:schoolId
+// @access  Public
+export const getSchoolById = asyncHandler(async (req: Request, res: Response) => {
+  const school = await School.findById(req.params.schoolId);
+  if (!school) {
+    res.status(404);
+    throw new Error('School not found');
+  }
+  res.json(school);
+});
+
+
 export const updateSchool = asyncHandler(async (req: Request, res: Response) => {
   const school = await School.findOne({ _id: req.params.schoolId, event: req.params.eventId });
   if (!school) {

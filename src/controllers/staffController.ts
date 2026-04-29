@@ -6,7 +6,7 @@ import User from '../models/User';
 // @route   GET /api/v1/staff
 // @access  Seed Admin only
 export const getStaff = asyncHandler(async (_req: Request, res: Response) => {
-  const staff = await User.find({}).select('-passwordHash -pinCode').sort({ createdAt: -1 });
+  const staff = await User.find({ role: 'staff' }).select('-passwordHash -pinCode').sort({ createdAt: -1 });
   const result = staff.map((s) => ({
     _id: s._id,
     name: s.name,

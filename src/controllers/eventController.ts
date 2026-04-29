@@ -158,6 +158,11 @@ export const deleteEvent = asyncHandler(async (req: Request, res: Response) => {
     throw new Error('Event not found');
   }
 
+  if ([EventStatus.BRACKET_STAGE, EventStatus.COMPLETED].includes(event.status)) {
+    res.status(400);
+    throw new Error('Cannot delete an event that is in Bracket Stage or Completed');
+  }
+
   const eventId = event._id;
 
   await Promise.all([

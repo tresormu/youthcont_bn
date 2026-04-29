@@ -7,10 +7,18 @@ interface DecodedToken {
   userId: string;
 }
 
+interface SchoolOwnerToken {
+  schoolId: string;
+  eventId: string;
+  role: 'school_owner';
+  accessId: string;
+}
+
 declare global {
   namespace Express {
     interface Request {
       user?: IUser;
+      schoolOwner?: SchoolOwnerToken;
     }
   }
 }
@@ -44,5 +52,24 @@ export const adminOnly = (req: Request, res: Response, next: NextFunction): void
     next();
   } else {
     res.status(403).json({ message: 'Access denied: seed admin only' });
+  }
+};
+
+export const schoolOwnerAuth = (req: Request, res: Response, next: NextFunction): void => {
+  const token = req.cookies.school_jwt;
+  if (!token) {
+    res.status(401).json({ message: 'Not authorized' });
+    return;
+  }
+  try {
+    const decoded = jwt.verify(token, config.jwtSecret) as SchoolOwnerToken;
+    if (decoded.role !== 'school_owner') {
+      res.status(403).json({ message: 'Access denied' });
+      return;
+    }
+    req.schoolOwner = decoded;
+    next();
+  } catch {
+    res.status(401).json({ message: 'Not authorized, token invalid' });
   }
 };

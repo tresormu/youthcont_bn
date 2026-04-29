@@ -19,18 +19,6 @@ export const registerTeam = asyncHandler(async (req: Request, res: Response) => 
     throw new Error('Team name is required');
   }
 
-  if (!Array.isArray(members) || members.length !== 3) {
-    res.status(400);
-    throw new Error('A team must have exactly 3 members');
-  }
-
-  for (const m of members) {
-    if (!m.fullName || typeof m.fullName !== 'string') {
-      res.status(400);
-      throw new Error('Each member must have a fullName');
-    }
-  }
-
   const school = await School.findById(schoolIdStr);
   if (!school) {
     res.status(404);
@@ -49,12 +37,22 @@ export const registerTeam = asyncHandler(async (req: Request, res: Response) => 
     throw new Error('Maximum of 3 teams per school reached');
   }
 
-  // Auto-assign teamNumber as next available slot (1, 2, or 3)
+  // Re-check under the same query to reduce (but not eliminate) race window
   const existingNumbers = (await Team.find({ school: schoolIdStr }).distinct('teamNumber')) as number[];
+  if (existingNumbers.length >= 3) {
+    res.status(400);
+    throw new Error('Maximum of 3 teams per school reached');
+  }
   const teamNumber = ([1, 2, 3] as number[]).find((n) => !existingNumbers.includes(n))!;
 
-  // Assign speakerOrder automatically
-  const membersWithOrder = members.map((m: { fullName: string }, i: number) => ({
+  // Members are optional at creation — default to 3 empty placeholder slots
+  const rawMembers = Array.isArray(members) && members.length === 3 ? members : [
+    { fullName: '', speakerOrder: 1 },
+    { fullName: '', speakerOrder: 2 },
+    { fullName: '', speakerOrder: 3 },
+  ];
+
+  const membersWithOrder = rawMembers.map((m: { fullName: string }, i: number) => ({
     fullName: m.fullName,
     speakerOrder: i + 1,
   }));
@@ -131,6 +129,31 @@ export const deleteTeam = asyncHandler(async (req: Request, res: Response) => {
   res.json({ message: 'Team deleted' });
 });
 
+// @desc    Update team members/roster directly by teamId
+// @route   PUT /api/v1/teams/:teamId/members
+// @access  Private
+export const updateTeamMembers = asyncHandler(async (req: Request, res: Response) => {
+  const { members } = req.body;
+  const team = await Team.findById(req.params.teamId);
+  if (!team) {
+    res.status(404);
+    throw new Error('Team not found');
+  }
+
+  if (!Array.isArray(members)) {
+    res.status(400);
+    throw new Error('members must be an array');
+  }
+
+  team.members = members.map((m: { fullName: string }, i: number) => ({
+    fullName: m.fullName || '',
+    speakerOrder: i + 1,
+  }));
+
+  const updated = await team.save();
+  res.json(updated);
+});
+
 // @desc    Get all teams for an event sorted by points (Rankings)
 // @route   GET /api/v1/events/:eventId/rankings
 // @access  Public
@@ -141,27 +164,32 @@ export const getEventRankings = asyncHandler(async (req: Request, res: Response)
     .sort({ totalPoints: -1, matchesPlayed: 1 })
     .populate('school', 'name');
 
+  // Fetch all completed matches in one query instead of N queries
+  const allMatches = await Match.find({
+    event: eventId,
+    status: 'Completed',
+  }).select('stage winner teamA teamB');
+
   const stageOrder: Record<string, number> = {
     [TournamentStage.PRELIMINARY]: 1,
-    [TournamentStage.QUARTER_FINAL]: 2,
-    [TournamentStage.SEMI_FINAL]: 3,
-    [TournamentStage.FINAL]: 4,
+    [TournamentStage.ROUND_OF_16]: 2,
+    [TournamentStage.QUARTER_FINAL]: 3,
+    [TournamentStage.SEMI_FINAL]: 4,
+    [TournamentStage.FINAL]: 5,
   };
 
-  const ranked = await Promise.all(teams.map(async (team, index) => {
+  const ranked = teams.map((team, index) => {
+    const teamId = team._id.toString();
+    const teamMatches = allMatches.filter(
+      m => m.teamA?.toString() === teamId || m.teamB?.toString() === teamId
+    );
+
     let furthestStage = 'Prelim';
-
-    const matches = await Match.find({
-      event: eventId,
-      status: 'Completed',
-      $or: [{ teamA: team._id }, { teamB: team._id }],
-    }).select('stage winner');
-
-    if (matches.length > 0) {
-      const best = matches.reduce((prev, curr) =>
+    if (teamMatches.length > 0) {
+      const best = teamMatches.reduce((prev, curr) =>
         (stageOrder[curr.stage] ?? 0) > (stageOrder[prev.stage] ?? 0) ? curr : prev
       );
-      if (best.stage === TournamentStage.FINAL && best.winner?.toString() === team._id.toString()) {
+      if (best.stage === TournamentStage.FINAL && best.winner?.toString() === teamId) {
         furthestStage = 'Champion';
       } else {
         furthestStage = best.stage;
@@ -169,6 +197,7 @@ export const getEventRankings = asyncHandler(async (req: Request, res: Response)
     }
 
     return {
+      _id: teamId,
       rank: index + 1,
       teamName: team.name,
       school: (team.school as any)?.name,
@@ -177,7 +206,7 @@ export const getEventRankings = asyncHandler(async (req: Request, res: Response)
       matchesWon: team.matchesWon,
       furthestStage,
     };
-  }));
+  });
 
   res.json(ranked);
 });

@@ -46,7 +46,12 @@ export const submitContact = asyncHandler(async (req: Request, res: Response) =>
 export const getContacts = asyncHandler(async (req: Request, res: Response) => {
   const { status } = req.query;
 
-  const filter = status ? { status: status as ContactStatus } : {};
+  if (status && (!Object.values(ContactStatus).includes(String(status) as ContactStatus))) {
+    res.status(400);
+    throw new Error(`Invalid status. Valid options: ${Object.values(ContactStatus).join(', ')}`);
+  }
+
+  const filter = status ? { status: String(status) as ContactStatus } : {};
   const contacts = await ContactMessage.find(filter).sort({ createdAt: -1 });
 
   res.json(contacts);

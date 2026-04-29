@@ -3,6 +3,7 @@ import asyncHandler from '../utils/asyncHandler';
 import User from '../models/User';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
+import mongoose from 'mongoose';
 import config from '../config/config';
 import { sendStaffInviteEmail } from '../utils/sendEmail';
 
@@ -32,21 +33,32 @@ export const createStaff = asyncHandler(async (req: Request, res: Response) => {
   const passwordHash = await bcrypt.hash(seedPassword, 12);
   const pinHash = await bcrypt.hash(pinCode, 10);
 
-  const staff = await User.create({
-    name: '',
-    email,
-    passwordHash,
-    pinCode: pinHash,
-    role: 'staff',
-    isActive: false,
-  });
+  const session = await mongoose.startSession();
+  let staff;
+  try {
+    session.startTransaction();
+    staff = await User.create([{
+      name: '',
+      email,
+      passwordHash,
+      pinCode: pinHash,
+      role: 'staff',
+      isActive: false,
+    }], { session });
 
-  await sendStaffInviteEmail(email, pinCode);
+    await sendStaffInviteEmail(email, pinCode);
+    await session.commitTransaction();
+  } catch (error) {
+    await session.abortTransaction();
+    throw error;
+  } finally {
+    session.endSession();
+  }
 
   res.status(201).json({
-    _id: staff._id,
-    email: staff.email,
-    role: staff.role,
+    _id: staff[0]._id,
+    email: staff[0].email,
+    role: staff[0].role,
     message: 'Staff member invited. Credentials sent via email.',
   });
 });
