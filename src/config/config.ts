@@ -8,12 +8,12 @@ const requireEnv = (key: string): string => {
 };
 
 const config = {
-  port: Number(process.env.PORT) || 5000,
-  nodeEnv: process.env.NODE_ENV || 'development',
+  port: Number(process.env.PORT) ,
+  nodeEnv: process.env.NODE_ENV ,
   mongoUri: requireEnv('MONGODB_URI'),
   jwtSecret: requireEnv('JWT_SECRET'),
-  jwtExpiresIn: process.env.JWT_EXPIRES_IN || '30d',
-  clientUrl: process.env.CLIENT_URL || 'http://localhost:3000',
+  jwtExpiresIn: process.env.JWT_EXPIRES_IN,
+  clientUrl: process.env.CLIENT_URL,
   seedAdmin: {
     name: requireEnv('SEED_ADMIN_NAME'),
     email: requireEnv('SEED_ADMIN_EMAIL'),
@@ -21,11 +21,11 @@ const config = {
   },
   staff: {
     seedPassword: requireEnv('STAFF_SEED_PASSWORD'),
-    dashboardUrl: process.env.STAFF_DASHBOARD_URL || 'http://localhost:3000/staff/login',
+    dashboardUrl: process.env.STAFF_DASHBOARD_URL,
   },
   smtp: {
     host: requireEnv('SMTP_HOST'),
-    port: Number(process.env.SMTP_PORT) || 587,
+    port: Number(process.env.SMTP_PORT),
     user: requireEnv('SMTP_USER'),
     pass: requireEnv('SMTP_PASS'),
     from: process.env.SMTP_FROM || requireEnv('SMTP_USER'),
