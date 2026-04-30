@@ -8,10 +8,11 @@ const generateToken = (res: Response, userId: string): void => {
     expiresIn: config.jwtExpiresIn,
   } as jwt.SignOptions);
 
+  const isProd = config.nodeEnv !== 'development';
   res.cookie('jwt', token, {
     httpOnly: true,
-    secure: config.nodeEnv !== 'development',
-    sameSite: 'strict',
+    secure: isProd,
+    sameSite: isProd ? 'none' : 'lax',
     maxAge: expiresInDays * 24 * 60 * 60 * 1000,
   });
 };

@@ -121,10 +121,11 @@ export const staffChangePassword = asyncHandler(async (req: Request, res: Respon
 // @route   POST /api/v1/staff/auth/logout
 // @access  Private (staff)
 export const staffLogout = asyncHandler(async (_req: Request, res: Response) => {
+  const isProd = config.nodeEnv !== 'development';
   res.cookie('jwt', '', {
     httpOnly: true,
-    secure: config.nodeEnv !== 'development',
-    sameSite: 'strict',
+    secure: isProd,
+    sameSite: isProd ? 'none' : 'lax',
     expires: new Date(0),
   });
   res.json({ message: 'Logged out successfully' });

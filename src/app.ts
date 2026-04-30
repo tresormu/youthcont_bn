@@ -20,9 +20,7 @@ app.use(helmet());
 app.use(cors({
   origin: (origin, callback) => {
     const allowed = [
-      'https://youthcont-fn.vercel.app',
-      'http://localhost:5173',
-      'http://localhost:5174',
+      "https://youthcont-fn.vercel.app"
     ];
     if (!origin || allowed.includes(origin) || /\.vercel\.app$/.test(origin)) {
       callback(null, true);

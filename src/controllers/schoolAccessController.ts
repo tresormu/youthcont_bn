@@ -94,10 +94,11 @@ export const schoolOwnerLogin = asyncHandler(async (req: Request, res: Response)
     { expiresIn: '24h' } as jwt.SignOptions
   );
 
+  const isProd = config.nodeEnv !== 'development';
   res.cookie('school_jwt', token, {
     httpOnly: true,
-    secure: config.nodeEnv !== 'development',
-    sameSite: 'strict',
+    secure: isProd,
+    sameSite: isProd ? 'none' : 'lax',
     maxAge: 24 * 60 * 60 * 1000,
   });
 
