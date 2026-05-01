@@ -16,7 +16,7 @@ export interface IMatch extends Document {
   matchup?: mongoose.Types.ObjectId;
   event: mongoose.Types.ObjectId;
   teamA: mongoose.Types.ObjectId;
-  teamB?: mongoose.Types.ObjectId; // Optional for byes
+  teamB?: mongoose.Types.ObjectId;
   winner?: mongoose.Types.ObjectId;
   loser?: mongoose.Types.ObjectId;
   winnerSpeakerPoints?: number;
@@ -26,6 +26,8 @@ export interface IMatch extends Document {
   status: MatchStatus;
   stage: TournamentStage;
   bracketSlot?: number;
+  round?: number;
+  isBye?: boolean;
   scoredBy?: mongoose.Types.ObjectId;
   scoredAt?: Date;
 }
@@ -91,6 +93,14 @@ const matchSchema: Schema = new Schema({
   bracketSlot: {
     type: Number,
     default: null
+  },
+  round: {
+    type: Number,
+    default: null
+  },
+  isBye: {
+    type: Boolean,
+    default: false
   },
   scoredBy: {
     type: Schema.Types.ObjectId,

@@ -466,8 +466,109 @@ async function advanceWinnerToNextRound(eventId: string, currentStage: Tournamen
   }
 }
 
-// @desc    Auto-assign preliminary school matchups
-// @route   POST /api/v1/events/:eventId/matchups/auto
+// @desc    Manually assign up to 3 opponents for a single team
+// @route   POST /api/v1/events/:eventId/matchups/manual
+// @access  Private
+export const manualAssignTeam = asyncHandler(async (req: Request, res: Response) => {
+  const { eventId } = req.params;
+  const { teamId, opponents } = req.body; // opponents: string[] (1-3 teamIds)
+
+  if (!teamId || !Array.isArray(opponents) || opponents.length === 0) {
+    res.status(400);
+    throw new Error('teamId and at least one opponent are required');
+  }
+
+  if (opponents.length > 3) {
+    res.status(400);
+    throw new Error('A team can have at most 3 preliminary matches');
+  }
+
+  const event = await Event.findById(eventId);
+  if (!event || event.status !== EventStatus.PRELIMINARY_ROUNDS) {
+    res.status(400);
+    throw new Error('Event must be in Preliminary Rounds to assign matchups');
+  }
+
+  const team = await Team.findOne({ _id: teamId, event: eventId });
+  if (!team) {
+    res.status(404);
+    throw new Error('Team not found in this event');
+  }
+
+  // Check how many matches this team already has
+  const existingMatches = await Match.find({
+    event: eventId,
+    stage: TournamentStage.PRELIMINARY,
+    $or: [{ teamA: teamId }, { teamB: teamId }],
+    isBye: { $ne: true },
+  });
+
+  if (existingMatches.length + opponents.length > 3) {
+    res.status(400);
+    throw new Error(`Team already has ${existingMatches.length} match(es). Can only add ${3 - existingMatches.length} more.`);
+  }
+
+  const created: any[] = [];
+
+  for (const opponentId of opponents) {
+    if (opponentId === teamId) {
+      res.status(400);
+      throw new Error('A team cannot play against itself');
+    }
+
+    const opponent = await Team.findOne({ _id: opponentId, event: eventId });
+    if (!opponent) {
+      res.status(404);
+      throw new Error(`Opponent team ${opponentId} not found in this event`);
+    }
+
+    if (opponent.school.toString() === team.school.toString()) {
+      res.status(400);
+      throw new Error(`${team.name} and ${opponent.name} are from the same school`);
+    }
+
+    // Check duplicate pairing
+    const duplicate = await Match.findOne({
+      event: eventId,
+      stage: TournamentStage.PRELIMINARY,
+      $or: [
+        { teamA: teamId, teamB: opponentId },
+        { teamA: opponentId, teamB: teamId },
+      ],
+    });
+    if (duplicate) {
+      res.status(409);
+      throw new Error(`${team.name} vs ${opponent.name} match already exists`);
+    }
+
+    // Check opponent doesn't already have 3 matches
+    const opponentMatchCount = await Match.countDocuments({
+      event: eventId,
+      stage: TournamentStage.PRELIMINARY,
+      $or: [{ teamA: opponentId }, { teamB: opponentId }],
+      isBye: { $ne: true },
+    });
+    if (opponentMatchCount >= 3) {
+      res.status(400);
+      throw new Error(`${opponent.name} already has 3 matches assigned`);
+    }
+
+    const match = await Match.create({
+      event: String(eventId),
+      teamA: teamId,
+      teamB: opponentId,
+      stage: TournamentStage.PRELIMINARY,
+      status: MatchStatus.PENDING,
+      round: existingMatches.length + created.length + 1,
+    });
+    created.push(match);
+    console.log(`[manualAssign] created match: ${team.name} vs ${opponent.name}`);
+  }
+
+  emitToEvent(String(eventId), 'matchups:created', { matchesCount: created.length });
+  res.status(201).json({ message: `${created.length} match(es) created`, matches: created });
+});
+
 // @access  Private
 export const autoAssignMatchups = asyncHandler(async (req: Request, res: Response) => {
   const { eventId } = req.params;
@@ -478,98 +579,136 @@ export const autoAssignMatchups = asyncHandler(async (req: Request, res: Respons
     throw new Error('Event must be in Preliminary Rounds stage to auto-assign matchups');
   }
 
-  const schools = await School.find({ event: eventId });
-  if (schools.length < 2) {
-    res.status(400);
-    throw new Error('At least 2 schools are required to assign matchups');
-  }
-
   const teams = await Team.find({ event: eventId });
-  let activeTeams = [...teams];
-  const byeSchools: string[] = [];
+  const teamCount = teams.length;
 
-  if (schools.length % 2 !== 0) {
-    const shuffledSchools = [...schools].sort(() => Math.random() - 0.5);
-    const byeSchool = shuffledSchools[0];
-    byeSchools.push(byeSchool.name);
-    activeTeams = activeTeams.filter(t => t.school.toString() !== byeSchool._id.toString());
+  console.log(`[autoAssign] eventId=${eventId} teamCount=${teamCount}`);
+
+  if (teamCount < 2) {
+    res.status(400);
+    throw new Error('At least 2 teams are required to assign matchups');
   }
 
-  let bestEdges: [string, string][] = [];
-  let maxEdges = 0;
+  // Add a virtual BYE slot if odd number of teams
+  const BYE = 'BYE';
+  const slots: string[] = teams.map(t => t._id.toString());
+  if (teamCount % 2 !== 0) slots.push(BYE);
+  const n = slots.length; // always even
 
-  for (let attempt = 0; attempt < 100; attempt++) {
-    const edges: [string, string][] = [];
-    const matchCounts = new Map<string, number>();
-    const schoolOpponents = new Map<string, Set<string>>(); // Track which schools each team has faced
-    activeTeams.forEach(t => {
-      matchCounts.set(t._id.toString(), 0);
-      schoolOpponents.set(t._id.toString(), new Set<string>());
-    });
+  console.log(`[autoAssign] slots=${n} (BYE=${teamCount % 2 !== 0})`);
 
-    let stuck = false;
-    while (true) {
-      const needing = activeTeams.filter(t => matchCounts.get(t._id.toString())! < 3);
-      if (needing.length === 0) break;
+  // Round-robin using circle method — generates n-1 rounds, we take first 3
+  // Fixed slot: slots[0], rotate the rest
+  const ROUNDS = 3;
+  const matchesPerRound: [string, string][][] = [];
+  const rotating = slots.slice(1);
 
-      needing.sort((a, b) => matchCounts.get(b._id.toString())! - matchCounts.get(a._id.toString())!);
-      const t1 = needing[0];
-      const t1SchoolId = t1.school.toString();
-      const t1FacedSchools = schoolOpponents.get(t1._id.toString())!;
+  for (let round = 0; round < ROUNDS; round++) {
+    const roundSlots = [slots[0], ...rotating];
+    const pairs: [string, string][] = [];
 
-      const candidates = needing.filter(t2 => {
-        const t2SchoolId = t2.school.toString();
-        return (
-          t1._id.toString() !== t2._id.toString() &&
-          t1SchoolId !== t2SchoolId && // Different schools
-          !t1FacedSchools.has(t2SchoolId) && // t1 hasn't faced any team from t2's school
-          !schoolOpponents.get(t2._id.toString())!.has(t1SchoolId) // t2 hasn't faced any team from t1's school
-        );
-      });
-
-      if (candidates.length === 0) {
-        stuck = true;
-        break;
+    for (let i = 0; i < n / 2; i++) {
+      const a = roundSlots[i];
+      const b = roundSlots[n - 1 - i];
+      // Skip BYE pairs — the team with BYE sits out this round
+      if (a !== BYE && b !== BYE) {
+        // Ensure teams are from different schools
+        const teamA = teams.find(t => t._id.toString() === a)!;
+        const teamB = teams.find(t => t._id.toString() === b)!;
+        if (teamA.school.toString() !== teamB.school.toString()) {
+          pairs.push([a, b]);
+        } else {
+          // Same school — swap b with the BYE slot or skip
+          console.log(`[autoAssign] round=${round+1} skipping same-school pair: ${teamA.name} vs ${teamB.name}`);
+        }
       }
-
-      const t2 = candidates[Math.floor(Math.random() * candidates.length)];
-      const t2SchoolId = t2.school.toString();
-
-      edges.push([t1._id.toString(), t2._id.toString()]);
-      matchCounts.set(t1._id.toString(), matchCounts.get(t1._id.toString())! + 1);
-      matchCounts.set(t2._id.toString(), matchCounts.get(t2._id.toString())! + 1);
-      
-      // Mark that these teams have now faced each other's schools
-      schoolOpponents.get(t1._id.toString())!.add(t2SchoolId);
-      schoolOpponents.get(t2._id.toString())!.add(t1SchoolId);
     }
 
-    if (!stuck) {
-      bestEdges = edges;
-      break;
-    }
-    if (edges.length > maxEdges) {
-      maxEdges = edges.length;
-      bestEdges = edges;
+    matchesPerRound.push(pairs);
+    // Rotate: move last element of rotating to front
+    rotating.unshift(rotating.pop()!);
+  }
+
+  // Validate: every real team must appear in exactly 3 rounds total
+  const appearances = new Map<string, number>();
+  teams.forEach(t => appearances.set(t._id.toString(), 0));
+
+  for (const roundPairs of matchesPerRound) {
+    for (const [a, b] of roundPairs) {
+      appearances.set(a, (appearances.get(a) ?? 0) + 1);
+      appearances.set(b, (appearances.get(b) ?? 0) + 1);
     }
   }
 
+  // Teams with BYE will have 2 appearances — that's their 3rd slot (the BYE round)
+  // We create a BYE match record for them so the UI shows 3 slots
+  const byeTeams: string[] = [];
+  for (const [teamId, count] of appearances.entries()) {
+    if (count < 2) {
+      console.log(`[autoAssign] WARNING: team ${teamId} only has ${count} matches`);
+    }
+    if (count === 2) byeTeams.push(teamId); // got a BYE in one round
+  }
+
+  console.log(`[autoAssign] matchesPerRound: ${matchesPerRound.map(r => r.length).join(', ')} | byeTeams: ${byeTeams.length}`);
+
+  // Persist atomically
   const matchesCreated: any[] = [];
-  for (const edge of bestEdges) {
-    const match = await Match.create({
-      event: String(eventId),
-      teamA: edge[0],
-      teamB: edge[1],
-      stage: TournamentStage.PRELIMINARY,
-      status: MatchStatus.PENDING,
-    });
-    matchesCreated.push(match);
+
+  const persist = async () => {
+    for (let round = 0; round < ROUNDS; round++) {
+      for (const [a, b] of matchesPerRound[round]) {
+        const match = await Match.create({
+          event: String(eventId),
+          teamA: a,
+          teamB: b,
+          stage: TournamentStage.PRELIMINARY,
+          status: MatchStatus.PENDING,
+          round: round + 1,
+        });
+        matchesCreated.push(match);
+        console.log(`[autoAssign] created match round=${round+1} ${a} vs ${b}`);
+      }
+    }
+    // Create BYE match records so every team shows 3 slots in the UI
+    for (const teamId of byeTeams) {
+      const match = await Match.create({
+        event: String(eventId),
+        teamA: teamId,
+        teamB: null,
+        stage: TournamentStage.PRELIMINARY,
+        status: MatchStatus.COMPLETED, // BYE counts as auto-win
+        isBye: true,
+        round: matchesPerRound.findIndex(r => !r.some(([a, b]) => a === teamId || b === teamId)) + 1,
+      });
+      matchesCreated.push(match);
+      console.log(`[autoAssign] created BYE match for team ${teamId}`);
+    }
+  };
+
+  if (supportsTransactions()) {
+    const session = await mongoose.startSession();
+    try {
+      session.startTransaction();
+      await persist();
+      await session.commitTransaction();
+    } catch (err) {
+      await session.abortTransaction();
+      throw err;
+    } finally {
+      session.endSession();
+    }
+  } else {
+    await persist();
   }
+
+  console.log(`[autoAssign] done — ${matchesCreated.length} total match records created`);
 
   const response = {
-    message: `Generated ${matchesCreated.length} preliminary matches.`,
+    message: `Generated ${matchesCreated.length} preliminary match records for ${teamCount} teams.`,
     matchesCount: matchesCreated.length,
-    ...(byeSchools.length > 0 && { byeSchools, notice: 'Some schools received a bye due to odd count' }),
+    rounds: ROUNDS,
+    ...(byeTeams.length > 0 && { byeTeams, notice: `${byeTeams.length} team(s) received a BYE round` }),
   };
 
   emitToEvent(String(eventId), 'matchups:created', response);
@@ -905,11 +1044,11 @@ export const getEventMatchups = asyncHandler(async (req: Request, res: Response)
 
   prelimMatches.forEach(m => {
     if (m.teamA) {
-      const scheduleA = teamSchedulesMap.get(m.teamA._id.toString());
+      const scheduleA = teamSchedulesMap.get((m.teamA as any)._id.toString());
       if (scheduleA) scheduleA.matches.push(m);
     }
     if (m.teamB) {
-      const scheduleB = teamSchedulesMap.get(m.teamB._id.toString());
+      const scheduleB = teamSchedulesMap.get((m.teamB as any)._id.toString());
       if (scheduleB) scheduleB.matches.push(m);
     }
   });

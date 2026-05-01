@@ -7,6 +7,7 @@ import {
   getEventMatchups,
   getMatchupMatches,
   autoAssignMatchups,
+  manualAssignTeam,
   generateBracket,
   getEventBracket,
   cancelMatchup,
@@ -20,6 +21,7 @@ import { protect } from '../middleware/authMiddleware';
 const router = express.Router();
 
 router.route('/events/:eventId/matchups').get(getEventMatchups).post(protect, createMatchup);
+router.post('/events/:eventId/matchups/manual', protect, manualAssignTeam);
 router.post('/events/:eventId/matchups/auto', protect, autoAssignMatchups);
 router.delete('/events/:eventId/matchups/preliminary', protect, cancelPreliminaryMatchups);
 router.get('/events/:eventId/bracket', getEventBracket);
