@@ -19,6 +19,11 @@ export const registerTeam = asyncHandler(async (req: Request, res: Response) => 
     throw new Error('Team name is required');
   }
 
+  if (!Array.isArray(members) || members.length !== 3 || members.some((m: any) => !m.fullName?.trim())) {
+    res.status(400);
+    throw new Error('Exactly 3 team members with full names are required');
+  }
+
   const school = await School.findById(schoolIdStr);
   if (!school) {
     res.status(404);
@@ -45,15 +50,14 @@ export const registerTeam = asyncHandler(async (req: Request, res: Response) => 
   }
   const teamNumber = ([1, 2, 3] as number[]).find((n) => !existingNumbers.includes(n))!;
 
-  // Members are optional at creation — default to 3 empty placeholder slots
-  const rawMembers = Array.isArray(members) && members.length === 3 ? members : [
-    { fullName: '', speakerOrder: 1 },
-    { fullName: '', speakerOrder: 2 },
-    { fullName: '', speakerOrder: 3 },
-  ];
+  const teamExists = await Team.findOne({ name, school: schoolIdStr });
+  if (teamExists) {
+    res.status(400);
+    throw new Error('A team with this name already exists for this school');
+  }
 
-  const membersWithOrder = rawMembers.map((m: { fullName: string }, i: number) => ({
-    fullName: m.fullName,
+  const membersWithOrder = (members as { fullName: string }[]).map((m, i) => ({
+    fullName: m.fullName.trim(),
     speakerOrder: i + 1,
   }));
 
