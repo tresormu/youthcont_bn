@@ -23,6 +23,14 @@
   },
   "homepage": "https://github.com/tresormu/youthcont_bn#readme",
   "dependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cookie-parser": "^1.4.10",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/json2csv": "^5.0.7",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^25.6.0",
+    "@types/nodemailer": "^8.0.0",
     "@types/pdfkit": "^0.17.6",
     "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.7",
@@ -38,22 +46,14 @@
     "nodemailer": "^8.0.5",
     "pdfkit": "^0.18.0",
     "socket.io": "^4.8.3",
-    "tsx": "^4.21.0"
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
   },
   "devDependencies": {
-    "@types/bcryptjs": "^2.4.6",
-    "@types/cookie-parser": "^1.4.10",
-    "@types/cors": "^2.8.19",
     "@types/exceljs": "^0.5.3",
-    "@types/express": "^5.0.6",
     "@types/helmet": "^0.0.48",
-    "@types/json2csv": "^5.0.7",
-    "@types/jsonwebtoken": "^9.0.10",
     "@types/mongoose": "^5.11.96",
-    "@types/node": "^25.6.0",
-    "@types/nodemailer": "^8.0.0",
     "nodemon": "^3.1.14",
-    "ts-node": "^10.9.2",
-    "typescript": "^6.0.3"
+    "ts-node": "^10.9.2"
   }
 }
