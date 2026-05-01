@@ -645,13 +645,7 @@ export const autoAssignMatchups = asyncHandler(async (req: Request, res: Respons
       }
     }
 
-    const pairs: [string, string][] = intendedPairs.filter(([a, b]) => {
-      const tA = teams.find(t => t._id.toString() === a)!;
-      const tB = teams.find(t => t._id.toString() === b)!;
-      return tA.school.toString() !== tB.school.toString();
-    });
-
-    matchesPerRound.push(pairs);
+    matchesPerRound.push(intendedPairs);
     // Rotate: move last element of rotating to front
     rotating.unshift(rotating.pop()!);
   }
@@ -945,9 +939,9 @@ export const cancelPreliminaryMatchups = asyncHandler(async (req: Request, res: 
   const { eventId } = req.params;
 
   const event = await Event.findById(eventId);
-  if (!event || event.status !== EventStatus.PRELIMINARY_ROUNDS) {
+  if (!event || (event.status !== EventStatus.PRELIMINARY_ROUNDS && event.status !== EventStatus.REGISTRATION_OPEN)) {
     res.status(400);
-    throw new Error('Event must be in Preliminary Rounds stage to cancel matchups');
+    throw new Error('Event must be in Preliminary Rounds or Registration Open stage to cancel matchups');
   }
 
   const prelimMatches = await Match.find({ event: eventId, stage: TournamentStage.PRELIMINARY });
