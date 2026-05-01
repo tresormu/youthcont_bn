@@ -605,24 +605,51 @@ export const autoAssignMatchups = asyncHandler(async (req: Request, res: Respons
 
   for (let round = 0; round < ROUNDS; round++) {
     const roundSlots = [slots[0], ...rotating];
-    const pairs: [string, string][] = [];
+    const intendedPairs: [string, string][] = [];
 
     for (let i = 0; i < n / 2; i++) {
       const a = roundSlots[i];
       const b = roundSlots[n - 1 - i];
-      // Skip BYE pairs — the team with BYE sits out this round
       if (a !== BYE && b !== BYE) {
-        // Ensure teams are from different schools
-        const teamA = teams.find(t => t._id.toString() === a)!;
-        const teamB = teams.find(t => t._id.toString() === b)!;
-        if (teamA.school.toString() !== teamB.school.toString()) {
-          pairs.push([a, b]);
-        } else {
-          // Same school — swap b with the BYE slot or skip
-          console.log(`[autoAssign] round=${round+1} skipping same-school pair: ${teamA.name} vs ${teamB.name}`);
+        intendedPairs.push([a, b]);
+      }
+    }
+
+    // Resolve same-school conflicts in intendedPairs
+    for (let i = 0; i < intendedPairs.length; i++) {
+      const [a, b] = intendedPairs[i];
+      const teamA = teams.find(t => t._id.toString() === a)!;
+      const teamB = teams.find(t => t._id.toString() === b)!;
+      
+      if (teamA.school.toString() === teamB.school.toString()) {
+        let swapped = false;
+        for (let j = 0; j < intendedPairs.length; j++) {
+          if (i === j) continue;
+          const [pa, pb] = intendedPairs[j];
+          const teamPA = teams.find(t => t._id.toString() === pa)!;
+          const teamPB = teams.find(t => t._id.toString() === pb)!;
+          
+          if (
+            teamA.school.toString() !== teamPB.school.toString() && 
+            teamPA.school.toString() !== teamB.school.toString()
+          ) {
+            intendedPairs[i] = [a, pb];
+            intendedPairs[j] = [pa, b];
+            swapped = true;
+            break;
+          }
+        }
+        if (!swapped) {
+          console.log(`[autoAssign] round=${round+1} could not resolve same-school conflict for: ${teamA.name} vs ${teamB.name}`);
         }
       }
     }
+
+    const pairs: [string, string][] = intendedPairs.filter(([a, b]) => {
+      const tA = teams.find(t => t._id.toString() === a)!;
+      const tB = teams.find(t => t._id.toString() === b)!;
+      return tA.school.toString() !== tB.school.toString();
+    });
 
     matchesPerRound.push(pairs);
     // Rotate: move last element of rotating to front
