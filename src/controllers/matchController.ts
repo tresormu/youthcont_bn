@@ -675,7 +675,7 @@ export const autoAssignMatchups = asyncHandler(async (req: Request, res: Respons
       const match = await Match.create({
         event: String(eventId),
         teamA: teamId,
-        teamB: null,
+        teamB: undefined,
         stage: TournamentStage.PRELIMINARY,
         status: MatchStatus.COMPLETED, // BYE counts as auto-win
         isBye: true,
