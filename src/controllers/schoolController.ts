@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import asyncHandler from '../utils/asyncHandler';
 import School from '../models/School';
+import Team from '../models/Team';
 import Event, { EventStatus } from '../models/Event';
 import { emitToEvent } from '../socket';
 import mongoose from 'mongoose';
@@ -9,13 +10,27 @@ import mongoose from 'mongoose';
 // @route   POST /api/v1/events/:eventId/schools
 // @access  Private
 export const registerSchool = asyncHandler(async (req: Request, res: Response) => {
-  const { name, region, contactPerson, contactEmail } = req.body;
+  const { name, region, contactPerson, contactEmail, teams } = req.body;
   const { eventId } = req.params;
   const eventIdStr = String(eventId);
 
   if (!name) {
     res.status(400);
     throw new Error('School name is required');
+  }
+
+  // Validate teams if provided
+  if (teams && Array.isArray(teams)) {
+    for (const [i, team] of teams.entries()) {
+      if (!team.name?.trim()) {
+        res.status(400);
+        throw new Error(`Team ${i + 1} name is required`);
+      }
+      if (!Array.isArray(team.members) || team.members.length !== 3 || team.members.some((m: any) => !m.fullName?.trim())) {
+        res.status(400);
+        throw new Error(`Team ${i + 1} must have exactly 3 members with full names`);
+      }
+    }
   }
 
   const event = await Event.findById(eventIdStr);
@@ -36,6 +51,19 @@ export const registerSchool = asyncHandler(async (req: Request, res: Response) =
   }
 
   const school = await School.create({ name, region, contactPerson, contactEmail, event: eventIdStr });
+
+  // Create teams with members if provided
+  if (teams && Array.isArray(teams) && teams.length > 0) {
+    await Promise.all(teams.map((team: any, i: number) =>
+      Team.create({
+        name: team.name.trim(),
+        teamNumber: i + 1,
+        members: team.members.map((m: any, j: number) => ({ fullName: m.fullName.trim(), speakerOrder: j + 1 })),
+        school: school._id,
+        event: eventIdStr,
+      })
+    ));
+  }
   
   emitToEvent(eventIdStr, 'school:added', school);
   
