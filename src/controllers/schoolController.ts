@@ -64,8 +64,9 @@ export const registerSchool = asyncHandler(async (req: Request, res: Response) =
       })
     ));
   }
-  
-  emitToEvent(eventIdStr, 'school:added', school);
+
+  const teamCount = teams && Array.isArray(teams) ? teams.length : 0;
+  emitToEvent(eventIdStr, 'school:added', { ...school.toObject(), teamCount, publicSpeakerCount: 0, teams: [], publicSpeakers: [] });
   
   res.status(201).json(school);
 });
