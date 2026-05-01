@@ -828,7 +828,7 @@ export const cancelPreliminaryMatchups = asyncHandler(async (req: Request, res: 
 
     event.status = EventStatus.REGISTRATION_OPEN;
     await event.save(session ? { session } : {});
-    emitToEvent(eventId, 'event:statusChanged', { status: EventStatus.REGISTRATION_OPEN });
+    emitToEvent(String(eventId), 'event:statusChanged', { status: EventStatus.REGISTRATION_OPEN });
   };
 
   if (supportsTransactions()) {
