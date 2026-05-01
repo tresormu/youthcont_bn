@@ -36,11 +36,10 @@ export const loginUser = asyncHandler(async (req: Request, res: Response) => {
 // @route   POST /api/v1/auth/logout
 // @access  Private
 export const logoutUser = asyncHandler(async (req: Request, res: Response) => {
-  const isProd = config.nodeEnv !== 'development';
   res.cookie('jwt', '', {
     httpOnly: true,
-    secure: isProd,
-    sameSite: isProd ? 'none' : 'lax',
+    secure: true,
+    sameSite: 'none',
     expires: new Date(0),
   });
   res.status(200).json({ message: 'Logged out successfully' });
