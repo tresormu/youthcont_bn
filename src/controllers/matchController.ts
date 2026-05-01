@@ -645,7 +645,13 @@ export const autoAssignMatchups = asyncHandler(async (req: Request, res: Respons
       }
     }
 
-    matchesPerRound.push(intendedPairs);
+    const validPairs: [string, string][] = intendedPairs.filter(([a, b]) => {
+      const tA = teams.find(t => t._id.toString() === a)!;
+      const tB = teams.find(t => t._id.toString() === b)!;
+      return tA.school.toString() !== tB.school.toString();
+    });
+
+    matchesPerRound.push(validPairs);
     // Rotate: move last element of rotating to front
     rotating.unshift(rotating.pop()!);
   }
@@ -676,24 +682,24 @@ export const autoAssignMatchups = asyncHandler(async (req: Request, res: Respons
   // Persist atomically
   const matchesCreated: any[] = [];
 
-  const persist = async () => {
+  const persist = async (session?: mongoose.ClientSession) => {
     for (let round = 0; round < ROUNDS; round++) {
       for (const [a, b] of matchesPerRound[round]) {
-        const match = await Match.create({
+        const [match] = await Match.create([{
           event: String(eventId),
           teamA: a,
           teamB: b,
           stage: TournamentStage.PRELIMINARY,
           status: MatchStatus.PENDING,
           round: round + 1,
-        });
+        }], { session });
         matchesCreated.push(match);
         console.log(`[autoAssign] created match round=${round+1} ${a} vs ${b}`);
       }
     }
     // Create BYE match records so every team shows 3 slots in the UI
     for (const teamId of byeTeams) {
-      const match = await Match.create({
+      const [match] = await Match.create([{
         event: String(eventId),
         teamA: teamId,
         teamB: undefined,
@@ -701,26 +707,32 @@ export const autoAssignMatchups = asyncHandler(async (req: Request, res: Respons
         status: MatchStatus.COMPLETED, // BYE counts as auto-win
         isBye: true,
         round: matchesPerRound.findIndex(r => !r.some(([a, b]) => a === teamId || b === teamId)) + 1,
-      });
+      }], { session });
       matchesCreated.push(match);
       console.log(`[autoAssign] created BYE match for team ${teamId}`);
     }
   };
 
-  if (supportsTransactions()) {
-    const session = await mongoose.startSession();
-    try {
-      session.startTransaction();
+  try {
+    if (supportsTransactions()) {
+      const session = await mongoose.startSession();
+      try {
+        session.startTransaction();
+        await persist(session);
+        await session.commitTransaction();
+      } catch (err) {
+        await session.abortTransaction();
+        throw err;
+      } finally {
+        session.endSession();
+      }
+    } else {
       await persist();
-      await session.commitTransaction();
-    } catch (err) {
-      await session.abortTransaction();
-      throw err;
-    } finally {
-      session.endSession();
     }
-  } else {
-    await persist();
+  } catch (err: any) {
+    console.error('[autoAssign] Transaction failed:', err);
+    res.status(500);
+    throw new Error(`Failed to save auto-assigned matches: ${err.message}`);
   }
 
   console.log(`[autoAssign] done — ${matchesCreated.length} total match records created`);
