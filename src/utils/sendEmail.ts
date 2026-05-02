@@ -1,12 +1,7 @@
-import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 import config from '../config/config';
 
-const transporter = nodemailer.createTransport({
-  host: config.smtp.host,
-  port: config.smtp.port,
-  secure: config.smtp.port === 465,
-  auth: { user: config.smtp.user, pass: config.smtp.pass },
-});
+const resend = new Resend(config.resend.apiKey);
 
 export const sendContactConfirmation = async (data: {
   email: string;
@@ -14,8 +9,8 @@ export const sendContactConfirmation = async (data: {
 }) => {
   const year = new Date().getFullYear();
 
-  await transporter.sendMail({
-    from: `"Youth Contest" <${config.smtp.from}>`,
+  await resend.emails.send({
+    from: config.resend.fromEmail,
     to: data.email,
     subject: `We received your message — Youth Contest`,
     html: `
@@ -127,9 +122,9 @@ export const sendContactNotification = async (data: {
 }) => {
   const year = new Date().getFullYear();
 
-  await transporter.sendMail({
-    from: `"Youth Contest" <${config.smtp.from}>`,
-    to: config.smtp.from,
+  await resend.emails.send({
+    from: config.resend.fromEmail,
+    to: config.resend.fromEmail,
     replyTo: data.email,
     subject: `[Contact] ${data.reason} — from ${data.email}`,
     html: `
@@ -212,8 +207,8 @@ export const sendStaffInviteEmail = async (email: string, pinCode: string) => {
   const dashboardUrl = config.staff.dashboardUrl;
   const year = new Date().getFullYear();
 
-  await transporter.sendMail({
-    from: `"Youth Contest" <${config.smtp.from}>`,
+  await resend.emails.send({
+    from: config.resend.fromEmail,
     to: email,
     subject: 'Welcome to Youth Contest – Your Staff Account is Ready',
     html: `
@@ -360,8 +355,8 @@ export const sendSchoolOwnerAccessEmail = async (data: {
     dateStyle: 'medium', timeStyle: 'short',
   });
 
-  await transporter.sendMail({
-    from: `"Youth Contest" <${config.smtp.from}>`,
+  await resend.emails.send({
+    from: config.resend.fromEmail,
     to: data.email,
     subject: `Your School Report Access — ${data.tournamentName}`,
     html: `

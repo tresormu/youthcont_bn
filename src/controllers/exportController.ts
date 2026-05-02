@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import asyncHandler from '../utils/asyncHandler';
 import Team from '../models/Team';
 import Match, { MatchStatus } from '../models/Match';
+import SpeakerScore from '../models/SpeakerScore';
 import { TournamentStage } from '../models/Matchup';
 import ExcelJS from 'exceljs';
 import PDFDocument from 'pdfkit';
@@ -426,38 +427,79 @@ export const exportSchoolReportPDF = asyncHandler(async (req: Request, res: Resp
       renderMatchSection(bracketMatches, 'KNOCKOUT STAGE', (m) => bracketLabel[m.stage] ?? m.stage);
     }
 
-    // Speaker breakdown
+    // Per-round speaker scores for this team
+    const memberIds = team.members.map(m => m._id);
+    const speakerDocs = await SpeakerScore.find({
+      event: eventId,
+      memberId: { $in: memberIds },
+    }).lean();
+
     if (team.members.length > 0) {
-      y = checkPageBreak(doc, y, 16 + team.members.length * 18);
+      y = checkPageBreak(doc, y, 16 + (team.members.length + 1) * 18);
       y += 6;
       doc.save().fillColor('#475569').fontSize(7.5).font('Helvetica-Bold')
         .text('SPEAKER BREAKDOWN', MARGIN + 4, y, { characterSpacing: 1 }).restore();
       y += 14;
 
       const sCols = [
-        { x: MARGIN + 4,   w: 200, label: 'Speaker' },
-        { x: MARGIN + 208, w: 80,  label: 'Total Points' },
-        { x: MARGIN + 292, w: 80,  label: 'Avg / Match' },
+        { x: MARGIN + 4,   w: 140, label: 'Speaker' },
+        { x: MARGIN + 148, w: 50,  label: 'Round 1' },
+        { x: MARGIN + 202, w: 50,  label: 'Round 2' },
+        { x: MARGIN + 256, w: 50,  label: 'Round 3' },
+        { x: MARGIN + 310, w: 60,  label: 'Total' },
+        { x: MARGIN + 374, w: 60,  label: 'Avg / Match' },
       ];
       y = checkPageBreak(doc, y, 16);
       y = drawTableHeader(doc, sCols, y, 16);
 
+      let teamSpeakerTotal = 0;
       team.members.forEach((member, idx) => {
         y = checkPageBreak(doc, y, 18);
-        const avg = team.matchesPlayed > 0
-          ? Math.round(((member.totalSpeakerPoints ?? 0) / team.matchesPlayed) * 10) / 10
-          : 0;
+        const mId = member._id?.toString();
+        const mScores = speakerDocs.filter((s: any) => s.memberId.toString() === mId);
+        const r1 = mScores.find((s: any) => s.roundNumber === 1)?.pointsScored ?? 0;
+        const r2 = mScores.find((s: any) => s.roundNumber === 2)?.pointsScored ?? 0;
+        const r3 = mScores.find((s: any) => s.roundNumber === 3)?.pointsScored ?? 0;
+        const total = member.totalSpeakerPoints ?? 0;
+        teamSpeakerTotal += total;
+        const matchCount = mScores.length;
+        const avg = matchCount > 0 ? Math.round((total / matchCount) * 10) / 10 : 0;
         drawRow(doc, [
           { x: sCols[0].x, w: sCols[0].w, text: member.fullName || `Speaker ${member.speakerOrder}` },
-          { x: sCols[1].x, w: sCols[1].w, text: String(member.totalSpeakerPoints ?? 0) },
-          { x: sCols[2].x, w: sCols[2].w, text: String(avg) },
+          { x: sCols[1].x, w: sCols[1].w, text: r1 > 0 ? String(r1) : '—' },
+          { x: sCols[2].x, w: sCols[2].w, text: r2 > 0 ? String(r2) : '—' },
+          { x: sCols[3].x, w: sCols[3].w, text: r3 > 0 ? String(r3) : '—' },
+          { x: sCols[4].x, w: sCols[4].w, text: String(total), color: '#0369a1' },
+          { x: sCols[5].x, w: sCols[5].w, text: String(avg) },
         ], y, 18, idx % 2 === 0 ? '#f8fafc' : '#ffffff');
         y += 18;
       });
+
+      // Team speaker total row
+      y = checkPageBreak(doc, y, 18);
+      doc.save().rect(MARGIN, y, CONTENT_W, 18).fill('#e0f2fe').restore();
+      doc.save().fillColor('#0369a1').fontSize(8).font('Helvetica-Bold')
+        .text('Team Speaker Total', sCols[0].x, y + 5, { width: sCols[0].w }).restore();
+      doc.save().fillColor('#0369a1').fontSize(8).font('Helvetica-Bold')
+        .text(String(teamSpeakerTotal), sCols[4].x, y + 5, { width: sCols[4].w }).restore();
+      y += 18;
     }
 
     y += 16;
   }
+
+  // ── School Grand Total ──
+  const allMemberIds = schoolTeams.flatMap(t => t.members.map(m => m._id));
+  const allSpeakerDocs = await SpeakerScore.find({ event: eventId, memberId: { $in: allMemberIds } }).lean();
+  const grandTotal = allSpeakerDocs.reduce((s: number, d: any) => s + (d.pointsScored ?? 0), 0);
+
+  y = checkPageBreak(doc, y, 36);
+  doc.save().rect(MARGIN, y, CONTENT_W, 30).fill('#1e293b').restore();
+  doc.save().fillColor('#94a3b8').fontSize(8).font('Helvetica-Bold')
+    .text('GRAND TOTAL — ALL SPEAKER POINTS FOR THIS SCHOOL', MARGIN + 12, y + 6, { characterSpacing: 1 }).restore();
+  doc.save().fillColor('#ffffff').fontSize(16).font('Helvetica-Bold')
+    .text(String(grandTotal), MARGIN + 12, y + 10, { width: CONTENT_W - 24, align: 'right' }).restore();
+  y += 38;
 
   // ── Footer ──
   y = checkPageBreak(doc, y, 30);
@@ -465,7 +507,7 @@ export const exportSchoolReportPDF = asyncHandler(async (req: Request, res: Resp
   y += 8;
   doc.save().fillColor('#94a3b8').fontSize(8).font('Helvetica')
     .text(
-      `Youth Contest  ·  ${school.name}  ·  This report is confidential and expires ${access.expiresAt.toLocaleString()}`,
+      `Youth Contest  ·  ${school.name}  ·  Confidential  ·  Expires ${access.expiresAt.toLocaleString()}`,
       MARGIN, y, { width: CONTENT_W, align: 'center' }
     ).restore();
 

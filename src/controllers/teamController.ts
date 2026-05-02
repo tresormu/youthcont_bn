@@ -4,6 +4,7 @@ import Team from '../models/Team';
 import School from '../models/School';
 import Event, { EventStatus } from '../models/Event';
 import Match from '../models/Match';
+import SpeakerScore from '../models/SpeakerScore';
 import { TournamentStage } from '../models/Matchup';
 
 // @desc    Register a team for a school
@@ -164,9 +165,14 @@ export const updateTeamMembers = asyncHandler(async (req: Request, res: Response
 export const getEventRankings = asyncHandler(async (req: Request, res: Response) => {
   const eventId = req.params.eventId;
 
-  const teams = await Team.find({ event: eventId })
-    .sort({ totalPoints: -1, matchesPlayed: 1 })
-    .populate('school', 'name');
+  const rawTeams = await Team.find({ event: eventId }).populate('school', 'name');
+  const teams = rawTeams.sort((a, b) => {
+    if (b.matchesWon !== a.matchesWon) return b.matchesWon - a.matchesWon;
+    const diffA = (a.totalPoints || 0) - (a.pointsConceded || 0);
+    const diffB = (b.totalPoints || 0) - (b.pointsConceded || 0);
+    if (diffB !== diffA) return diffB - diffA;
+    return (b.totalPoints || 0) - (a.totalPoints || 0);
+  });
 
   // Fetch all completed matches in one query instead of N queries
   const allMatches = await Match.find({
@@ -206,6 +212,8 @@ export const getEventRankings = asyncHandler(async (req: Request, res: Response)
       teamName: team.name,
       school: (team.school as any)?.name,
       totalPoints: team.totalPoints,
+      pointsConceded: team.pointsConceded,
+      pointDifferential: (team.totalPoints || 0) - (team.pointsConceded || 0),
       matchesPlayed: team.matchesPlayed,
       matchesWon: team.matchesWon,
       furthestStage,
@@ -213,4 +221,28 @@ export const getEventRankings = asyncHandler(async (req: Request, res: Response)
   });
 
   res.json(ranked);
+});
+
+// @desc    Get team details including match history and speaker scores
+// @route   GET /api/v1/events/:eventId/teams/:teamId/details
+// @access  Public
+export const getTeamDetails = asyncHandler(async (req: Request, res: Response) => {
+  const { eventId, teamId } = req.params;
+  const team = await Team.findOne({ _id: teamId, event: eventId }).populate('school', 'name');
+  if (!team) {
+    res.status(404);
+    throw new Error('Team not found');
+  }
+
+  const matches = await Match.find({
+    event: eventId,
+    $or: [{ teamA: teamId }, { teamB: teamId }]
+  }).populate('teamA', 'name school').populate('teamB', 'name school');
+
+  const speakerScores = await SpeakerScore.find({
+    event: eventId,
+    matchId: { $in: matches.map(m => m._id) }
+  });
+
+  res.json({ team, matches, speakerScores });
 });

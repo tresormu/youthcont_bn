@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
+import mongoose from 'mongoose';
 import asyncHandler from '../utils/asyncHandler';
 import TemporarySchoolAccess from '../models/TemporarySchoolAccess';
 import School from '../models/School';
@@ -10,6 +11,7 @@ import Match, { MatchStatus } from '../models/Match';
 import { TournamentStage } from '../models/Matchup';
 import config from '../config/config';
 import { sendSchoolOwnerAccessEmail } from '../utils/sendEmail';
+import SpeakerScore from '../models/SpeakerScore';
 
 const generateCode = (): string => {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no ambiguous chars (0/O, 1/I)
@@ -256,20 +258,40 @@ export const getSchoolReportDashboard = asyncHandler(async (req: Request, res: R
 
     const matches = [...prelimMatches, ...bracketMatches];
 
-    // Speaker breakdown
-    const speakerBreakdown = team.members.map(member => ({
-      name: member.fullName || `Speaker ${member.speakerOrder}`,
-      total_points: member.totalSpeakerPoints ?? 0,
-      matches_played: team.matchesPlayed,
-      avg_points: team.matchesPlayed > 0
-        ? Math.round(((member.totalSpeakerPoints ?? 0) / team.matchesPlayed) * 10) / 10
-        : 0,
-    }));
+    // Per-round speaker scores
+    const memberIds = team.members.map(m => m._id);
+    const memberScoreDocs = await SpeakerScore.find({
+      event: eventId,
+      memberId: { $in: memberIds },
+    }).lean();
+
+    const speakerBreakdown = team.members.map(member => {
+      const mId = member._id?.toString();
+      const scores = memberScoreDocs.filter((s: any) => s.memberId.toString() === mId);
+      const r1 = scores.find((s: any) => s.roundNumber === 1)?.pointsScored ?? 0;
+      const r2 = scores.find((s: any) => s.roundNumber === 2)?.pointsScored ?? 0;
+      const r3 = scores.find((s: any) => s.roundNumber === 3)?.pointsScored ?? 0;
+      const total = member.totalSpeakerPoints ?? 0;
+      const matchCount = scores.length;
+      return {
+        name: member.fullName || `Speaker ${member.speakerOrder}`,
+        role: 'Speaker',
+        round1: r1,
+        round2: r2,
+        round3: r3,
+        total_points: total,
+        avg_points: matchCount > 0 ? Math.round((total / matchCount) * 10) / 10 : 0,
+      };
+    });
+
+    const teamGrandTotal = speakerBreakdown.reduce((s, m) => s + m.total_points, 0);
 
     return {
       team_id: teamId,
       team_name: team.name,
       total_points: team.totalPoints,
+      wins: team.matchesWon,
+      losses: (team.matchesPlayed || 0) - (team.matchesWon || 0),
       team_rank: teamRank,
       team_rank_total: allTeams.length,
       status: getTeamStatus(teamId),
@@ -277,8 +299,11 @@ export const getSchoolReportDashboard = asyncHandler(async (req: Request, res: R
       bracket_count: bracketMatches.length,
       matches,
       speakers: speakerBreakdown,
+      team_grand_total: teamGrandTotal,
     };
   }));
+
+  const schoolGrandTotal = teamsData.reduce((s, t) => s + t.team_grand_total, 0);
 
   res.json({
     school_name: school.name,
@@ -286,6 +311,7 @@ export const getSchoolReportDashboard = asyncHandler(async (req: Request, res: R
     school_rank: schoolRank,
     school_rank_total: sortedSchools.length,
     total_speaker_points: totalSpeakerPoints,
+    grand_total_speaker_points: schoolGrandTotal,
     teams: teamsData,
     expires_at: access.expiresAt.toISOString(),
     generated_at: new Date().toISOString(),

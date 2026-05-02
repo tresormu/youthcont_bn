@@ -14,6 +14,7 @@ export interface ITeam extends Document {
   event: mongoose.Types.ObjectId;
   members: ITeamMember[];
   totalPoints: number;
+  pointsConceded: number;
   matchesPlayed: number;
   matchesWon: number;
 }
@@ -53,6 +54,10 @@ const teamSchema: Schema = new Schema({
     ]
   },
   totalPoints: {
+    type: Number,
+    default: 0
+  },
+  pointsConceded: {
     type: Number,
     default: 0
   },

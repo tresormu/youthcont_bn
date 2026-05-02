@@ -28,6 +28,7 @@ export interface IMatch extends Document {
   bracketSlot?: number;
   round?: number;
   isBye?: boolean;
+  isByePractice?: boolean;
   scoredBy?: mongoose.Types.ObjectId;
   scoredAt?: Date;
 }
@@ -99,6 +100,10 @@ const matchSchema: Schema = new Schema({
     default: null
   },
   isBye: {
+    type: Boolean,
+    default: false
+  },
+  isByePractice: {
     type: Boolean,
     default: false
   },

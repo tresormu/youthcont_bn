@@ -3,6 +3,7 @@ import asyncHandler from '../utils/asyncHandler';
 import Matchup, { TournamentStage } from '../models/Matchup';
 import Match, { MatchStatus } from '../models/Match';
 import Team from '../models/Team';
+import SpeakerScore from '../models/SpeakerScore';
 import School from '../models/School';
 import Event, { EventStatus } from '../models/Event';
 import { emitToEvent } from '../socket';
@@ -244,121 +245,200 @@ export const updateMatchPairing = asyncHandler(async (req: Request, res: Respons
 export const enterMatchResult = asyncHandler(async (req: Request, res: Response) => {
   const { winnerId, loserId, teamASpeakerScores, teamBSpeakerScores } = req.body;
 
-  if (!winnerId || !loserId) {
-    res.status(400);
-    throw new Error('winnerId and loserId are required');
-  }
-
-  if (!Array.isArray(teamASpeakerScores) || teamASpeakerScores.length === 0) {
-    res.status(400);
-    throw new Error('teamASpeakerScores are required');
-  }
-
-  if (!Array.isArray(teamBSpeakerScores) || teamBSpeakerScores.length === 0) {
-    res.status(400);
-    throw new Error('teamBSpeakerScores are required');
-  }
-
   const match = await Match.findById(req.params.id);
   if (!match) {
     res.status(404);
     throw new Error('Match not found');
   }
 
-  const validTeams = [match.teamA?.toString(), match.teamB?.toString()].filter(Boolean);
-  if (!validTeams.includes(winnerId.toString()) || !validTeams.includes(loserId.toString())) {
-    res.status(400);
-    throw new Error('Winner and loser must be the two teams in this match');
+  // Feature 5: Validate 30-point cap
+  const validateScores = (scores: any[]) => {
+    if (!Array.isArray(scores)) return false;
+    for (const s of scores) {
+      if (Number(s.points) > 30) return false;
+    }
+    return true;
+  };
+
+  const isByePractice = match.isByePractice;
+
+  if (isByePractice) {
+    if (!validateScores(teamASpeakerScores)) {
+      res.status(400);
+      throw new Error('Speaker score cannot exceed 30 points');
+    }
+  } else {
+    if (!winnerId || !loserId) {
+      res.status(400);
+      throw new Error('winnerId and loserId are required');
+    }
+    if (!Array.isArray(teamASpeakerScores) || teamASpeakerScores.length === 0) {
+      res.status(400);
+      throw new Error('teamASpeakerScores are required');
+    }
+    if (!Array.isArray(teamBSpeakerScores) || teamBSpeakerScores.length === 0) {
+      res.status(400);
+      throw new Error('teamBSpeakerScores are required');
+    }
+    if (!validateScores(teamASpeakerScores) || !validateScores(teamBSpeakerScores)) {
+      res.status(400);
+      throw new Error('Speaker score cannot exceed 30 points');
+    }
+    const validTeams = [match.teamA?.toString(), match.teamB?.toString()].filter(Boolean);
+    if (!validTeams.includes(winnerId.toString()) || !validTeams.includes(loserId.toString())) {
+      res.status(400);
+      throw new Error('Winner and loser must be the two teams in this match');
+    }
   }
 
-  const winPts = (teamASpeakerScores as any[]).reduce((s: number, m: any) => s + (Number(m.points) || 0), 0) === 
-    (teamBSpeakerScores as any[]).reduce((s: number, m: any) => s + (Number(m.points) || 0), 0)
-    ? (winnerId.toString() === match.teamA?.toString()
-        ? (teamASpeakerScores as any[]).reduce((s: number, m: any) => s + (Number(m.points) || 0), 0)
-        : (teamBSpeakerScores as any[]).reduce((s: number, m: any) => s + (Number(m.points) || 0), 0))
-    : (winnerId.toString() === match.teamA?.toString()
-        ? (teamASpeakerScores as any[]).reduce((s: number, m: any) => s + (Number(m.points) || 0), 0)
-        : (teamBSpeakerScores as any[]).reduce((s: number, m: any) => s + (Number(m.points) || 0), 0));
-
-  const losePts = loserId.toString() === match.teamA?.toString()
-    ? (teamASpeakerScores as any[]).reduce((s: number, m: any) => s + (Number(m.points) || 0), 0)
-    : (teamBSpeakerScores as any[]).reduce((s: number, m: any) => s + (Number(m.points) || 0), 0);
-
   const runUpdates = async (session?: mongoose.ClientSession) => {
-    const isCorrection = match.status === MatchStatus.COMPLETED && match.winner;
+    const isCorrection = match.status === MatchStatus.COMPLETED && (match.winner || isByePractice);
 
     if (isCorrection) {
-      const previousWinnerId = match.winner!.toString();
-      const previousLoserId = match.loser?.toString() || validTeams.find((id) => id !== previousWinnerId);
-      const previousWinnerPts = match.winnerSpeakerPoints ?? 0;
-      const previousLoserPts = match.loserSpeakerPoints ?? 0;
-
-      // Reverse team totals
-      await Team.findByIdAndUpdate(previousWinnerId, {
-        $inc: { totalPoints: -previousWinnerPts, matchesWon: -1, matchesPlayed: -1 },
-      }, session ? { session } : {});
-      if (previousLoserId) {
-        await Team.findByIdAndUpdate(previousLoserId, {
-          $inc: { totalPoints: -previousLoserPts, matchesPlayed: -1 },
+      // Reverse previous changes
+      if (isByePractice) {
+        const previousWinnerPts = match.winnerSpeakerPoints ?? 0;
+        await Team.findByIdAndUpdate(match.teamA, {
+          $inc: { totalPoints: -previousWinnerPts, matchesWon: -1, matchesPlayed: -1 },
         }, session ? { session } : {});
+        const prevAScores = match.teamASpeakerScores ?? [];
+        const teamADoc = await Team.findById(match.teamA);
+        if (teamADoc) {
+          for (const s of prevAScores) {
+            const member = teamADoc.members.find(m => m._id?.toString() === s.memberId.toString());
+            if (member) member.totalSpeakerPoints = (member.totalSpeakerPoints ?? 0) - s.points;
+          }
+          await teamADoc.save(session ? { session } : {});
+        }
+      } else {
+        const previousWinnerId = match.winner!.toString();
+        const validTeams = [match.teamA?.toString(), match.teamB?.toString()].filter(Boolean);
+        const previousLoserId = match.loser?.toString() || validTeams.find((id) => id !== previousWinnerId);
+        const previousWinnerPts = match.winnerSpeakerPoints ?? 0;
+        const previousLoserPts = match.loserSpeakerPoints ?? 0;
+
+        await Team.findByIdAndUpdate(previousWinnerId, {
+          $inc: { totalPoints: -previousWinnerPts, pointsConceded: -previousLoserPts, matchesWon: -1, matchesPlayed: -1 },
+        }, session ? { session } : {});
+        if (previousLoserId) {
+          await Team.findByIdAndUpdate(previousLoserId, {
+            $inc: { totalPoints: -previousLoserPts, pointsConceded: -previousWinnerPts, matchesPlayed: -1 },
+          }, session ? { session } : {});
+        }
+
+        const prevAScores = match.teamASpeakerScores ?? [];
+        const prevBScores = match.teamBSpeakerScores ?? [];
+        const teamADoc = await Team.findById(match.teamA);
+        const teamBDoc = match.teamB ? await Team.findById(match.teamB) : null;
+
+        if (teamADoc) {
+          for (const s of prevAScores) {
+            const member = teamADoc.members.find(m => m._id?.toString() === s.memberId.toString());
+            if (member) member.totalSpeakerPoints = (member.totalSpeakerPoints ?? 0) - s.points;
+          }
+          await teamADoc.save(session ? { session } : {});
+        }
+        if (teamBDoc) {
+          for (const s of prevBScores) {
+            const member = teamBDoc.members.find(m => m._id?.toString() === s.memberId.toString());
+            if (member) member.totalSpeakerPoints = (member.totalSpeakerPoints ?? 0) - s.points;
+          }
+          await teamBDoc.save(session ? { session } : {});
+        }
+      }
+      
+      // Delete old SpeakerScore docs
+      await SpeakerScore.deleteMany({ matchId: match._id }, session ? { session } : {});
+    }
+
+    if (isByePractice) {
+      // Feature 3: max score instead of sum
+      const maxScore = teamASpeakerScores.reduce((max: number, s: any) => Math.max(max, Number(s.points) || 0), 0);
+      
+      await Team.findByIdAndUpdate(match.teamA, {
+        $inc: { totalPoints: maxScore, matchesWon: 1, matchesPlayed: 1 },
+      }, session ? { session } : {});
+
+      const teamADoc = await Team.findById(match.teamA);
+      if (teamADoc) {
+        for (const s of teamASpeakerScores as any[]) {
+          const member = teamADoc.members.find(m => m._id?.toString() === s.memberId);
+          if (member) member.totalSpeakerPoints = (member.totalSpeakerPoints ?? 0) + (Number(s.points) || 0);
+          
+          await SpeakerScore.create([{
+            memberId: s.memberId,
+            matchId: match._id,
+            roundNumber: match.round || 1,
+            pointsScored: Number(s.points) || 0,
+            event: match.event
+          }], session ? { session } : {});
+        }
+        await teamADoc.save(session ? { session } : {});
       }
 
-      // Reverse individual member speaker points
-      const prevAScores = match.teamASpeakerScores ?? [];
-      const prevBScores = match.teamBSpeakerScores ?? [];
+      match.winner = match.teamA;
+      match.winnerSpeakerPoints = maxScore;
+      match.teamASpeakerScores = teamASpeakerScores.map((s: any) => ({ memberId: s.memberId, points: Number(s.points) || 0 }));
+      match.status = MatchStatus.COMPLETED;
+    } else {
+      // Normal match
+      const sumA = (teamASpeakerScores as any[]).reduce((s: number, m: any) => s + (Number(m.points) || 0), 0);
+      const sumB = (teamBSpeakerScores as any[]).reduce((s: number, m: any) => s + (Number(m.points) || 0), 0);
+      
+      const isWinnerA = winnerId.toString() === match.teamA?.toString();
+      const winPts = isWinnerA ? sumA : sumB;
+      const losePts = isWinnerA ? sumB : sumA;
+
+      await Team.findByIdAndUpdate(String(winnerId), {
+        $inc: { totalPoints: winPts, pointsConceded: losePts, matchesWon: 1, matchesPlayed: 1 },
+      }, session ? { session } : {});
+      await Team.findByIdAndUpdate(String(loserId), {
+        $inc: { totalPoints: losePts, pointsConceded: winPts, matchesPlayed: 1 },
+      }, session ? { session } : {});
+
       const teamADoc = await Team.findById(match.teamA);
       const teamBDoc = match.teamB ? await Team.findById(match.teamB) : null;
 
       if (teamADoc) {
-        for (const s of prevAScores) {
-          const member = teamADoc.members.find(m => m._id?.toString() === s.memberId.toString());
-          if (member) member.totalSpeakerPoints = (member.totalSpeakerPoints ?? 0) - s.points;
+        for (const s of teamASpeakerScores as any[]) {
+          const member = teamADoc.members.find(m => m._id?.toString() === s.memberId);
+          if (member) member.totalSpeakerPoints = (member.totalSpeakerPoints ?? 0) + (Number(s.points) || 0);
+          
+          await SpeakerScore.create([{
+            memberId: s.memberId,
+            matchId: match._id,
+            roundNumber: match.round || 1,
+            pointsScored: Number(s.points) || 0,
+            event: match.event
+          }], session ? { session } : {});
         }
         await teamADoc.save(session ? { session } : {});
       }
       if (teamBDoc) {
-        for (const s of prevBScores) {
-          const member = teamBDoc.members.find(m => m._id?.toString() === s.memberId.toString());
-          if (member) member.totalSpeakerPoints = (member.totalSpeakerPoints ?? 0) - s.points;
+        for (const s of teamBSpeakerScores as any[]) {
+          const member = teamBDoc.members.find(m => m._id?.toString() === s.memberId);
+          if (member) member.totalSpeakerPoints = (member.totalSpeakerPoints ?? 0) + (Number(s.points) || 0);
+          
+          await SpeakerScore.create([{
+            memberId: s.memberId,
+            matchId: match._id,
+            roundNumber: match.round || 1,
+            pointsScored: Number(s.points) || 0,
+            event: match.event
+          }], session ? { session } : {});
         }
         await teamBDoc.save(session ? { session } : {});
       }
+
+      match.winner = winnerId;
+      match.loser = loserId as any;
+      match.winnerSpeakerPoints = winPts;
+      match.loserSpeakerPoints = losePts;
+      match.teamASpeakerScores = teamASpeakerScores.map((s: any) => ({ memberId: s.memberId, points: Number(s.points) || 0 }));
+      match.teamBSpeakerScores = teamBSpeakerScores.map((s: any) => ({ memberId: s.memberId, points: Number(s.points) || 0 }));
+      match.status = MatchStatus.COMPLETED;
     }
 
-    // Apply new team totals
-    await Team.findByIdAndUpdate(String(winnerId), {
-      $inc: { totalPoints: winPts, matchesWon: 1, matchesPlayed: 1 },
-    }, session ? { session } : {});
-    await Team.findByIdAndUpdate(String(loserId), {
-      $inc: { totalPoints: losePts, matchesPlayed: 1 },
-    }, session ? { session } : {});
-
-    // Apply new individual member speaker points
-    const teamADoc2 = await Team.findById(match.teamA);
-    const teamBDoc2 = match.teamB ? await Team.findById(match.teamB) : null;
-
-    if (teamADoc2) {
-      for (const s of teamASpeakerScores as any[]) {
-        const member = teamADoc2.members.find(m => m._id?.toString() === s.memberId);
-        if (member) member.totalSpeakerPoints = (member.totalSpeakerPoints ?? 0) + (Number(s.points) || 0);
-      }
-      await teamADoc2.save(session ? { session } : {});
-    }
-    if (teamBDoc2) {
-      for (const s of teamBSpeakerScores as any[]) {
-        const member = teamBDoc2.members.find(m => m._id?.toString() === s.memberId);
-        if (member) member.totalSpeakerPoints = (member.totalSpeakerPoints ?? 0) + (Number(s.points) || 0);
-      }
-      await teamBDoc2.save(session ? { session } : {});
-    }
-
-    match.winner = winnerId;
-    match.loser = loserId as any;
-    match.winnerSpeakerPoints = winPts;
-    match.loserSpeakerPoints = losePts;
-    match.teamASpeakerScores = teamASpeakerScores.map((s: any) => ({ memberId: s.memberId, points: Number(s.points) || 0 }));
-    match.teamBSpeakerScores = teamBSpeakerScores.map((s: any) => ({ memberId: s.memberId, points: Number(s.points) || 0 }));
-    match.status = MatchStatus.COMPLETED;
     match.scoredBy = req.user?._id as any;
     match.scoredAt = new Date();
     await match.save(session ? { session } : {});
@@ -593,6 +673,7 @@ export const autoAssignMatchups = asyncHandler(async (req: Request, res: Respons
   const ROUNDS = 3;
   const matchCount = new Map<string, number>();
   const paired = new Map<string, Set<string>>();
+  const schoolMatchupHistory = new Set<string>();
   teams.forEach(t => {
     matchCount.set(t._id.toString(), 0);
     paired.set(t._id.toString(), new Set());
@@ -621,8 +702,24 @@ export const autoAssignMatchups = asyncHandler(async (req: Request, res: Respons
         );
       });
       if (candidates.length === 0) continue;
-      const opponent = candidates[0];
+      
+      const teamSchoolStr = team.school.toString();
+      const idealCandidates = candidates.filter(opp => {
+        const oppSchoolStr = opp.school.toString();
+        const schoolPair = [teamSchoolStr, oppSchoolStr].sort().join('_');
+        return !schoolMatchupHistory.has(schoolPair);
+      });
+
+      let opponent = idealCandidates[0];
+      if (!opponent) {
+        console.warn(`[autoAssign] Warning: Mathematically impossible to avoid school repeat for team ${tid}. Falling back to a repeated school matchup.`);
+        opponent = candidates[0];
+      }
+
       const oid = opponent._id.toString();
+      const oppSchoolStr = opponent.school.toString();
+      const schoolPairToRecord = [teamSchoolStr, oppSchoolStr].sort().join('_');
+
       roundPairs.push([tid, oid]);
       usedThisRound.add(tid);
       usedThisRound.add(oid);
@@ -630,6 +727,7 @@ export const autoAssignMatchups = asyncHandler(async (req: Request, res: Respons
       matchCount.set(oid, (matchCount.get(oid) ?? 0) + 1);
       paired.get(tid)!.add(oid);
       paired.get(oid)!.add(tid);
+      schoolMatchupHistory.add(schoolPairToRecord);
     }
     matchesPerRound.push(roundPairs);
     console.log(`[autoAssign] round=${round + 1} pairs=${roundPairs.length}`);
@@ -675,8 +773,9 @@ export const autoAssignMatchups = asyncHandler(async (req: Request, res: Respons
         event: String(eventId),
         teamA: tid,
         stage: TournamentStage.PRELIMINARY,
-        status: MatchStatus.COMPLETED,
+        status: MatchStatus.PENDING,
         isBye: true,
+        isByePractice: true,
         round: byeRound || ROUNDS,
       });
       matchesCreated.push(match);

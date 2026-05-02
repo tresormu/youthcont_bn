@@ -6,6 +6,8 @@ import Team from '../models/Team';
 import PublicSpeaker from '../models/PublicSpeaker';
 import Match from '../models/Match';
 import Matchup from '../models/Matchup';
+import SpeakerScore from '../models/SpeakerScore';
+import TemporarySchoolAccess from '../models/TemporarySchoolAccess';
 import { emitToEvent } from '../socket';
 
 // Valid status transitions — enforces the SRS lifecycle
@@ -158,12 +160,13 @@ export const deleteEvent = asyncHandler(async (req: Request, res: Response) => {
     throw new Error('Event not found');
   }
 
-  if ([EventStatus.BRACKET_STAGE, EventStatus.COMPLETED].includes(event.status)) {
+  if (event.status === EventStatus.BRACKET_STAGE) {
     res.status(400);
-    throw new Error('Cannot delete an event that is in Bracket Stage or Completed');
+    throw new Error('Cannot delete an event that is currently in Bracket Stage. Complete or reset it first.');
   }
 
   const eventId = event._id;
+  console.log(`[deleteEvent] Deleting event "${event.name}" (${eventId}) — status: ${event.status}`);
 
   await Promise.all([
     Match.deleteMany({ event: eventId }),
@@ -171,8 +174,11 @@ export const deleteEvent = asyncHandler(async (req: Request, res: Response) => {
     Team.deleteMany({ event: eventId }),
     PublicSpeaker.deleteMany({ event: eventId }),
     School.deleteMany({ event: eventId }),
+    SpeakerScore.deleteMany({ event: eventId }),
+    TemporarySchoolAccess.deleteMany({ event: eventId }),
   ]);
 
   await event.deleteOne();
-  res.json({ message: 'Event and all associated data deleted' });
+  console.log(`[deleteEvent] Event "${event.name}" and all associated data deleted.`);
+  res.json({ message: 'Tournament and all associated data permanently deleted' });
 });

@@ -23,12 +23,9 @@ const config = {
     seedPassword: requireEnv('STAFF_SEED_PASSWORD'),
     dashboardUrl: process.env.STAFF_DASHBOARD_URL,
   },
-  smtp: {
-    host: requireEnv('SMTP_HOST'),
-    port: Number(process.env.SMTP_PORT),
-    user: requireEnv('SMTP_USER'),
-    pass: requireEnv('SMTP_PASS'),
-    from: process.env.SMTP_FROM || requireEnv('SMTP_USER'),
+  resend: {
+    apiKey: requireEnv('RESEND_API_KEY'),
+    fromEmail: process.env.RESEND_FROM_EMAIL || 'Youth Contest <noreply@youthcontest.com>',
   },
 } as const;
 

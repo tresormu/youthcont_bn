@@ -12,7 +12,7 @@ const MONGODB_URI = process.env.MONGODB_URI;
 
 if (!MONGODB_URI) {
   console.error('Missing MONGODB_URI in .env');
-  process.exit(1);
+  process.exit(1)
 }
 
 async function seed() {
@@ -20,7 +20,6 @@ async function seed() {
     await mongoose.connect(MONGODB_URI!);
     console.log('Connected to MongoDB...');
 
-    // Find a user to be the creator of events
     let user = await User.findOne();
     if (!user) {
       console.error('No user found in the database. Please run npm run seed:admin first.');
