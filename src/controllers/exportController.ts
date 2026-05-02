@@ -16,9 +16,15 @@ const MARGIN = 45;
 const CONTENT_W = PAGE_W - MARGIN * 2;
 
 async function getRankedData(eventId: string) {
-  const teams = await Team.find({ event: eventId })
-    .sort({ totalPoints: -1, matchesPlayed: 1 })
-    .populate('school', 'name');
+  const rawTeams = await Team.find({ event: eventId }).populate('school', 'name');
+
+  const teams = rawTeams.sort((a, b) => {
+    if (b.matchesWon !== a.matchesWon) return b.matchesWon - a.matchesWon;
+    if (b.totalPoints !== a.totalPoints) return (b.totalPoints || 0) - (a.totalPoints || 0);
+    const diffA = (a.totalPoints || 0) - (a.pointsConceded || 0);
+    const diffB = (b.totalPoints || 0) - (b.pointsConceded || 0);
+    return diffB - diffA;
+  });
 
   const allMatches = await Match.find({
     event: eventId,
@@ -263,12 +269,21 @@ export const exportSchoolReportPDF = asyncHandler(async (req: Request, res: Resp
     res.status(401); throw new Error('Access expired');
   }
 
-  const [school, event, allTeams] = await Promise.all([
+  const [school, event, allTeamsRaw] = await Promise.all([
     School.findById(schoolId),
     Event.findById(eventId),
-    Team.find({ event: eventId }).sort({ totalPoints: -1 }),
+    Team.find({ event: eventId }),
   ]);
   if (!school || !event) { res.status(404); throw new Error('Not found'); }
+
+  // Sort using the same priority as rankings: wins → totalPoints → pointDiff
+  const allTeams = allTeamsRaw.sort((a, b) => {
+    if (b.matchesWon !== a.matchesWon) return b.matchesWon - a.matchesWon;
+    if (b.totalPoints !== a.totalPoints) return (b.totalPoints || 0) - (a.totalPoints || 0);
+    const diffA = (a.totalPoints || 0) - (a.pointsConceded || 0);
+    const diffB = (b.totalPoints || 0) - (b.pointsConceded || 0);
+    return diffB - diffA;
+  });
 
   const schoolTeams = allTeams.filter(t => t.school.toString() === schoolId.toString());
 

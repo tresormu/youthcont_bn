@@ -834,8 +834,15 @@ export const generateBracket = asyncHandler(async (req: Request, res: Response) 
     teams = teamIds.map((id: string) => found.find((t) => t._id.toString() === id)!);
   } else {
     teams = await Team.find({ event: eventId })
-      .sort({ totalPoints: -1, matchesPlayed: 1 })
-      .limit(numTeams);
+      .populate('school', 'name');
+    const sorted = [...teams].sort((a, b) => {
+      if (b.matchesWon !== a.matchesWon) return b.matchesWon - a.matchesWon;
+      if (b.totalPoints !== a.totalPoints) return (b.totalPoints || 0) - (a.totalPoints || 0);
+      const diffA = (a.totalPoints || 0) - (a.pointsConceded || 0);
+      const diffB = (b.totalPoints || 0) - (b.pointsConceded || 0);
+      return diffB - diffA;
+    });
+    teams = sorted.slice(0, numTeams);
     if (teams.length < numTeams) {
       res.status(400);
       throw new Error(`Not enough teams to form bracket — only ${teams.length} teams found`);

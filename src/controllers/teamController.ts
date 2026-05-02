@@ -168,10 +168,10 @@ export const getEventRankings = asyncHandler(async (req: Request, res: Response)
   const rawTeams = await Team.find({ event: eventId }).populate('school', 'name');
   const teams = rawTeams.sort((a, b) => {
     if (b.matchesWon !== a.matchesWon) return b.matchesWon - a.matchesWon;
+    if (b.totalPoints !== a.totalPoints) return (b.totalPoints || 0) - (a.totalPoints || 0);
     const diffA = (a.totalPoints || 0) - (a.pointsConceded || 0);
     const diffB = (b.totalPoints || 0) - (b.pointsConceded || 0);
-    if (diffB !== diffA) return diffB - diffA;
-    return (b.totalPoints || 0) - (a.totalPoints || 0);
+    return diffB - diffA;
   });
 
   // Fetch all completed matches in one query instead of N queries
