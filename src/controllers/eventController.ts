@@ -30,6 +30,16 @@ export const createEvent = asyncHandler(async (req: Request, res: Response) => {
     throw new Error('Event name is required');
   }
 
+  if (name.trim().length < 6) {
+    res.status(400);
+    throw new Error('Event name must be at least 6 characters');
+  }
+
+  if (name.trim().length < 6) {
+    res.status(400);
+    throw new Error('Event name must be at least 6 characters');
+  }
+
   const eventExists = await Event.findOne({ name });
   if (eventExists) {
     res.status(400);

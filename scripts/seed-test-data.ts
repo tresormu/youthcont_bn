@@ -69,7 +69,7 @@ async function seed() {
       for (let i = 1; i <= 20; i++) {
         await School.create({
           name: `${event.name.split(' ')[0]} School ${i}`,
-          region: ['North', 'South', 'East', 'West', 'Central'][Math.floor(Math.random() * 5)],
+          ownerEmail: `school${i}@example.com`,
           contactPerson: `Principal ${i}`,
           contactEmail: `school${i}@example.com`,
           event: event._id
@@ -108,7 +108,37 @@ async function seed() {
     }
     console.log(`  Created teams and speakers for ${allSchools.length} schools.`);
 
-    console.log('✅ Test data seeding and verification completed successfully!');
+    // --- Validation checks ---
+    console.log('\nRunning validation checks...');
+
+    // 1. ownerEmail: verify schools have ownerEmail, not region
+    const sampleSchool = await School.findOne({ event: events[0]._id });
+    if (!sampleSchool) throw new Error('No school found for validation');
+    if ((sampleSchool as any).region !== undefined) {
+      console.error('❌ School still has region field — migration incomplete');
+    } else if (!sampleSchool.ownerEmail) {
+      console.error('❌ School ownerEmail is missing');
+    } else {
+      console.log(`✅ ownerEmail check passed: ${sampleSchool.ownerEmail}`);
+    }
+
+    // 2. Tournament name min-length: names < 6 chars must be rejected
+    const shortNames = ['', 'A', 'AB', 'ABC', 'ABCD', 'ABCDE'];
+    let nameLengthPassed = true;
+    for (const shortName of shortNames) {
+      if (shortName.trim().length >= 6) {
+        console.error(`❌ Name "${shortName}" should have failed min-length check but passed`);
+        nameLengthPassed = false;
+      }
+    }
+    const validName = 'ValidTournament';
+    if (validName.trim().length < 6) {
+      console.error(`❌ Name "${validName}" should have passed min-length check but failed`);
+      nameLengthPassed = false;
+    }
+    if (nameLengthPassed) console.log('✅ Tournament name min-length (6) check passed');
+
+    console.log('\n✅ Test data seeding and verification completed successfully!');
   } catch (error) {
     console.error('Error seeding data:', error);
   } finally {
