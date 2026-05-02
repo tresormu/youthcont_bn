@@ -259,7 +259,7 @@ export const getSchoolReportDashboard = asyncHandler(async (req: Request, res: R
     const matches = [...prelimMatches, ...bracketMatches];
 
     // Per-round speaker scores
-    const memberIds = team.members.map(m => m._id);
+    const memberIds = team.members.map(m => m._id?.toString()).filter(Boolean) as string[];
     const memberScoreDocs = await SpeakerScore.find({
       event: eventId,
       memberId: { $in: memberIds },

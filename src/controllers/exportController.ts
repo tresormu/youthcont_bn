@@ -428,7 +428,7 @@ export const exportSchoolReportPDF = asyncHandler(async (req: Request, res: Resp
     }
 
     // Per-round speaker scores for this team
-    const memberIds = team.members.map(m => m._id);
+    const memberIds = team.members.map(m => m._id?.toString()).filter(Boolean) as string[];
     const speakerDocs = await SpeakerScore.find({
       event: eventId,
       memberId: { $in: memberIds },
@@ -489,7 +489,7 @@ export const exportSchoolReportPDF = asyncHandler(async (req: Request, res: Resp
   }
 
   // ── School Grand Total ──
-  const allMemberIds = schoolTeams.flatMap(t => t.members.map(m => m._id));
+  const allMemberIds = schoolTeams.flatMap(t => t.members.map(m => m._id?.toString()).filter(Boolean)) as string[];
   const allSpeakerDocs = await SpeakerScore.find({ event: eventId, memberId: { $in: allMemberIds } }).lean();
   const grandTotal = allSpeakerDocs.reduce((s: number, d: any) => s + (d.pointsScored ?? 0), 0);
 
