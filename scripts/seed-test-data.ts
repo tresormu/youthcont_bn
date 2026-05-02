@@ -1,3 +1,4 @@
+import dns from 'dns';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import Event, { EventStatus } from '../src/models/Event';
@@ -8,6 +9,11 @@ import User from '../src/models/User';
 
 dotenv.config();
 
+if (process.env.MONGODB_URI?.startsWith('mongodb+srv://')) {
+  dns.setServers(['8.8.8.8', '1.1.1.1']);
+  dns.setDefaultResultOrder('ipv4first');
+}
+
 const MONGODB_URI = process.env.MONGODB_URI;
 
 if (!MONGODB_URI) {
@@ -17,7 +23,7 @@ if (!MONGODB_URI) {
 
 async function seed() {
   try {
-    await mongoose.connect(MONGODB_URI!);
+    await mongoose.connect(MONGODB_URI!, { serverSelectionTimeoutMS: 30000, socketTimeoutMS: 30000, family: 4 });
     console.log('Connected to MongoDB...');
 
     let user = await User.findOne();
