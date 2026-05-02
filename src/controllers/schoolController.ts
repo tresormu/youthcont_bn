@@ -12,7 +12,7 @@ import mongoose from 'mongoose';
 // @route   POST /api/v1/events/:eventId/schools
 // @access  Private
 export const registerSchool = asyncHandler(async (req: Request, res: Response) => {
-  const { name, region, contactPerson, contactEmail, teams } = req.body;
+  const { name, ownerEmail, contactPerson, contactEmail, teams } = req.body;
   const { eventId } = req.params;
   const eventIdStr = String(eventId);
 
@@ -52,7 +52,7 @@ export const registerSchool = asyncHandler(async (req: Request, res: Response) =
     throw new Error('School already registered for this event');
   }
 
-  const school = await School.create({ name, region, contactPerson, contactEmail, event: eventIdStr });
+  const school = await School.create({ name, ownerEmail, contactPerson, contactEmail, event: eventIdStr });
 
   // Create teams with members if provided
   if (teams && Array.isArray(teams) && teams.length > 0) {
@@ -129,9 +129,9 @@ export const updateSchool = asyncHandler(async (req: Request, res: Response) => 
     throw new Error('School not found');
   }
 
-  const { name, region, contactPerson, contactEmail } = req.body;
+  const { name, ownerEmail, contactPerson, contactEmail } = req.body;
   if (name) school.name = name;
-  if (region !== undefined) school.region = region;
+  if (ownerEmail !== undefined) school.ownerEmail = ownerEmail;
   if (contactPerson !== undefined) school.contactPerson = contactPerson;
   if (contactEmail !== undefined) school.contactEmail = contactEmail;
 

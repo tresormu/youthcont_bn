@@ -2,7 +2,7 @@ import mongoose, { Schema, Document } from 'mongoose';
 
 export interface ISchool extends Document {
   name: string;
-  region?: string;
+  ownerEmail?: string;
   contactPerson?: string;
   contactEmail?: string;
   event: mongoose.Types.ObjectId;
@@ -13,7 +13,7 @@ const schoolSchema: Schema = new Schema({
     type: String,
     required: true
   },
-  region: {
+  ownerEmail: {
     type: String
   },
   contactPerson: {
