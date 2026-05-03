@@ -31,6 +31,7 @@ export const generateSchoolAccess = asyncHandler(async (req: Request, res: Respo
   if (!school_id || !email || !event_id) {
     res.status(400); throw new Error('school_id, email, and event_id are required');
   }
+  const normalizedEmail = String(email).toLowerCase().trim();
 
   const [school, event] = await Promise.all([
     School.findOne({ _id: school_id, event: event_id }),
@@ -38,6 +39,22 @@ export const generateSchoolAccess = asyncHandler(async (req: Request, res: Respo
   ]);
   if (!school) { res.status(404); throw new Error('School not found for this event'); }
   if (!event) { res.status(404); throw new Error('Event not found'); }
+
+  // Prevent duplicate emails/codes for the same school owner while access is still valid.
+  const existingActiveAccess = await TemporarySchoolAccess.findOne({
+    email: normalizedEmail,
+    school: school_id,
+    event: event_id,
+    used: false,
+    expiresAt: { $gt: new Date() },
+  });
+  if (existingActiveAccess) {
+    res.status(200).json({
+      expires_at: existingActiveAccess.expiresAt.toISOString(),
+      message: 'An active access code already exists for this email. No new email was sent.',
+    });
+    return;
+  }
 
   let accessCode: string;
   let attempts = 0;
@@ -50,7 +67,7 @@ export const generateSchoolAccess = asyncHandler(async (req: Request, res: Respo
   const expiresAt = new Date(Date.now() + 86400 * 1000);
 
   await TemporarySchoolAccess.create({
-    email: email.toLowerCase().trim(),
+    email: normalizedEmail,
     school: school_id,
     event: event_id,
     accessCode,
@@ -58,7 +75,7 @@ export const generateSchoolAccess = asyncHandler(async (req: Request, res: Respo
   });
 
   await sendSchoolOwnerAccessEmail({
-    email: email.toLowerCase().trim(),
+    email: normalizedEmail,
     schoolName: school.name,
     tournamentName: event.name,
     accessCode,
@@ -81,13 +98,19 @@ export const schoolOwnerLogin = asyncHandler(async (req: Request, res: Response)
     res.status(400); throw new Error('email and access_code are required');
   }
 
-  const record = await TemporarySchoolAccess.findOne({
-    email: email.toLowerCase().trim(),
-    accessCode: access_code.toUpperCase().trim(),
-  }).populate('school', 'name').populate('event', 'name');
+  const record = await TemporarySchoolAccess.findOneAndUpdate(
+    {
+      email: email.toLowerCase().trim(),
+      accessCode: access_code.toUpperCase().trim(),
+      used: false,
+      expiresAt: { $gt: new Date() },
+    },
+    { $set: { used: true } },
+    { new: true }
+  ).populate('school', 'name').populate('event', 'name');
 
-  if (!record || record.expiresAt < new Date()) {
-    res.status(401); throw new Error('Invalid email or code, or access expired');
+  if (!record) {
+    res.status(401); throw new Error('Invalid email or code, access expired, or code already used');
   }
 
   const token = jwt.sign(

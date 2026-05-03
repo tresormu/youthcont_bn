@@ -1,7 +1,23 @@
-import { Resend } from 'resend';
+import nodemailer from 'nodemailer';
 import config from '../config/config';
 
-const resend = new Resend(config.resend.apiKey);
+const transporter = nodemailer.createTransport({
+  host: config.smtp.host,
+  port: config.smtp.port,
+  auth: { user: config.smtp.user, pass: config.smtp.pass },
+});
+
+type EmailPayload = {
+  from: string;
+  to: string | string[];
+  subject: string;
+  html: string;
+  replyTo?: string;
+};
+
+const sendEmail = async (payload: EmailPayload) => {
+  await transporter.sendMail(payload);
+};
 
 export const sendContactConfirmation = async (data: {
   email: string;
@@ -9,8 +25,8 @@ export const sendContactConfirmation = async (data: {
 }) => {
   const year = new Date().getFullYear();
 
-  await resend.emails.send({
-    from: config.resend.fromEmail,
+  await sendEmail({
+    from: `"Youth Contest" <${config.smtp.from}>`,
     to: data.email,
     subject: `We received your message — Youth Contest`,
     html: `
@@ -122,9 +138,9 @@ export const sendContactNotification = async (data: {
 }) => {
   const year = new Date().getFullYear();
 
-  await resend.emails.send({
-    from: config.resend.fromEmail,
-    to: config.resend.fromEmail,
+  await sendEmail({
+    from: `"Youth Contest" <${config.smtp.from}>`,
+    to: config.smtp.from,
     replyTo: data.email,
     subject: `[Contact] ${data.reason} — from ${data.email}`,
     html: `
@@ -207,8 +223,8 @@ export const sendStaffInviteEmail = async (email: string, pinCode: string) => {
   const dashboardUrl = config.staff.dashboardUrl;
   const year = new Date().getFullYear();
 
-  await resend.emails.send({
-    from: config.resend.fromEmail,
+  await sendEmail({
+    from: `"Youth Contest" <${config.smtp.from}>`,
     to: email,
     subject: 'Welcome to Youth Contest – Your Staff Account is Ready',
     html: `
@@ -355,8 +371,8 @@ export const sendSchoolOwnerAccessEmail = async (data: {
     dateStyle: 'medium', timeStyle: 'short',
   });
 
-  await resend.emails.send({
-    from: config.resend.fromEmail,
+  await sendEmail({
+    from: `"Youth Contest" <${config.smtp.from}>`,
     to: data.email,
     subject: `Your School Report Access — ${data.tournamentName}`,
     html: `
