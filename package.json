@@ -29,6 +29,7 @@
     "@types/express": "^5.0.6",
     "@types/json2csv": "^5.0.7",
     "@types/jsonwebtoken": "^9.0.10",
+    "@types/nodemailer": "^8.0.0",
     "@types/node": "^25.6.0",
     "@types/pdfkit": "^0.17.6",
     "bcryptjs": "^3.0.3",
@@ -52,7 +53,6 @@
     "@types/exceljs": "^0.5.3",
     "@types/helmet": "^0.0.48",
     "@types/mongoose": "^5.11.96",
-    "@types/nodemailer": "^8.0.0",
     "nodemon": "^3.1.14",
     "ts-node": "^10.9.2"
   }
