@@ -24,11 +24,11 @@ const config = {
     dashboardUrl: process.env.STAFF_DASHBOARD_URL,
   },
   smtp: {
-    host: requireEnv('SMTP_HOST'),
-    port: Number(process.env.SMTP_PORT) || 587,
-    user: requireEnv('SMTP_USER'),
-    pass: requireEnv('SMTP_PASS'),
-    from: process.env.SMTP_FROM || requireEnv('SMTP_USER'),
+    host: requireEnv('EMAIL_HOST'),
+    port: Number(process.env.EMAIL_PORT) || 587,
+    user: requireEnv('EMAIL_USER'),
+    pass: requireEnv('EMAIL_PASSWORD'),
+    from: process.env.EMAIL_FROM || requireEnv('EMAIL_USER'),
   },
 } as const;
 
