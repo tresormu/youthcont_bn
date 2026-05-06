@@ -7,7 +7,7 @@ let io: SocketServer;
 export const initSocket = (httpServer: HttpServer): SocketServer => {
   io = new SocketServer(httpServer, {
     cors: {
-      origin: config.clientUrl,
+      origin: true,
       credentials: true,
     },
   });
@@ -30,3 +30,5 @@ export const emitToEvent = (eventId: string, event: string, payload: unknown): v
   if (!io) return;
   io.to(`event:${eventId}`).emit(event, payload);
 };
+
+

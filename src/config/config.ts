@@ -14,6 +14,10 @@ const config = {
   jwtSecret: requireEnv('JWT_SECRET'),
   jwtExpiresIn: process.env.JWT_EXPIRES_IN,
   clientUrl: process.env.CLIENT_URL,
+  clientUrls: (process.env.CLIENT_URL || '')
+    .split(',')
+    .map((url) => url.trim())
+    .filter(Boolean),
   seedAdmin: {
     name: requireEnv('SEED_ADMIN_NAME'),
     email: requireEnv('SEED_ADMIN_EMAIL'),
@@ -33,3 +37,4 @@ const config = {
 } as const;
 
 export default config;
+

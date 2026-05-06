@@ -17,22 +17,18 @@ import schoolReportRoutes from './routes/schoolReportRoutes';
 const app: Application = express();
 
 app.use(helmet());
-app.use(cors({
-  origin: (origin, callback) => {
-    const allowed = [
-      "https://youthcont-fn.vercel.app",
-    ];
-    if (!origin || allowed.includes(origin) || /\.vercel\.app$/.test(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true,
-}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
+
+const allowedOrigins = Array.from(new Set([
+  ...(config.clientUrls || []),
+  'https://youthcont-fn.vercel.app',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+]));
+
+app.use(cors({ origin: true, credentials: true }));
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -67,3 +63,5 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
 });
 
 export default app;
+
+
